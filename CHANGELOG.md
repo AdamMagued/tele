@@ -11,6 +11,8 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+## [1.11.12] - 2026-10-12
+
 ### Fixed
 
 - Stepping onto a message taller than the chat pane with `j` or `k` shows it
