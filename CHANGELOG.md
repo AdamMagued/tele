@@ -11,6 +11,8 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+## [1.11.11] - 2026-10-12
+
 ### Added
 
 - Log out, on `g L`. It asks first, naming the account and what goes with it -
