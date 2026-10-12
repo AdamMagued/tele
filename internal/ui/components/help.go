@@ -160,8 +160,27 @@ func helpSections(km keys.KeyMap) []helpSection {
 	return out
 }
 
-// helpMargin is the terminal cells reserved around the modal on each axis.
-const helpMargin = 2
+const (
+	// helpMargin is the terminal cells reserved around the modal on each axis.
+	helpMargin = 2
+
+	// defaultMaxInnerWidth is the baseline upper bound on inner width for wide terminals.
+	defaultMaxInnerWidth = 56
+
+	// minInnerWidth is the minimum inner width before clamping only to terminal borders.
+	minInnerWidth = 20
+
+	// keyColExtraRoom is the additional modal width beyond keyCol: 4 cells of key padding
+	// (2 leading spaces + 2 separator spaces) plus 34 cells for a readable description column.
+	keyColExtraRoom = 38
+
+	// minDescRoomInline is the minimum remaining columns needed to render a description
+	// inline next to its key on the same row. Below this, descriptions wrap onto the next line.
+	minDescRoomInline = 8
+
+	// stackedDescIndent is the indentation in cells for descriptions placed below their key.
+	stackedDescIndent = 4
+)
 
 // The modal is an opaque overlay: it carries its own background so text stays
 // readable on both light and dark terminals (a transparent overlay left the
@@ -201,81 +220,30 @@ func (h *HelpModal) SetSize(w, height int) {
 
 func (h *HelpModal) innerWidth() int {
 	innerW := h.width - 2*helpMargin - 2
-	maxInner := 56
-	if h.keyCol+38 > maxInner {
-		maxInner = h.keyCol + 38
+	maxInner := defaultMaxInnerWidth
+	if h.keyCol+keyColExtraRoom > maxInner {
+		maxInner = h.keyCol + keyColExtraRoom
 	}
 	if innerW > maxInner {
 		innerW = maxInner
 	}
-	if innerW < 20 {
-		innerW = 20
+	if innerW < minInnerWidth {
+		innerW = minInnerWidth
 	}
-	if h.width > 4 && innerW > h.width-2 {
+	if h.width > 2*helpMargin && innerW > h.width-2 {
 		innerW = h.width - 2
 	}
 	return innerW
 }
 
 func wrapHelpDesc(desc string, width int) []string {
+	if desc == "" {
+		return nil
+	}
 	if width <= 0 {
 		return []string{desc}
 	}
-	words := strings.Fields(desc)
-	if len(words) == 0 {
-		return nil
-	}
-	var lines []string
-	var cur strings.Builder
-	curW := 0
-	for _, w := range words {
-		ww := xansi.StringWidth(w)
-		if cur.Len() == 0 {
-			if ww <= width {
-				cur.WriteString(w)
-				curW = ww
-			} else {
-				wrapped := xansi.Hardwrap(w, width, false)
-				parts := strings.Split(wrapped, "\n")
-				for i, p := range parts {
-					if i == len(parts)-1 {
-						cur.WriteString(p)
-						curW = xansi.StringWidth(p)
-					} else {
-						lines = append(lines, p)
-					}
-				}
-			}
-			continue
-		}
-		if curW+1+ww <= width {
-			cur.WriteByte(' ')
-			cur.WriteString(w)
-			curW += 1 + ww
-		} else {
-			lines = append(lines, cur.String())
-			cur.Reset()
-			if ww <= width {
-				cur.WriteString(w)
-				curW = ww
-			} else {
-				wrapped := xansi.Hardwrap(w, width, false)
-				parts := strings.Split(wrapped, "\n")
-				for i, p := range parts {
-					if i == len(parts)-1 {
-						cur.WriteString(p)
-						curW = xansi.StringWidth(p)
-					} else {
-						lines = append(lines, p)
-					}
-				}
-			}
-		}
-	}
-	if cur.Len() > 0 {
-		lines = append(lines, cur.String())
-	}
-	return lines
+	return strings.Split(xansi.Wrap(desc, width, ""), "\n")
 }
 
 func (h *HelpModal) build(km keys.KeyMap) {
@@ -307,7 +275,7 @@ func (h *HelpModal) build(km keys.KeyMap) {
 			// canvas:ok key padding is styled through HelpBg below to carry the modal background
 			pad := strings.Repeat(" ", max(0, keyCol-keyW))
 
-			if descRoom >= 8 {
+			if descRoom >= minDescRoomInline {
 				prefix := theme.S().HelpBg.Render("  ") + theme.S().HelpKey.Render(key) +
 					theme.S().HelpBg.Render(pad+"  ")
 				descLines := wrapHelpDesc(r.Desc, descRoom)
@@ -323,12 +291,12 @@ func (h *HelpModal) build(km keys.KeyMap) {
 				}
 			} else {
 				lines = append(lines, theme.S().HelpBg.Render("  ")+theme.S().HelpKey.Render(key))
-				indentW := 4
-				if indentW > innerW-4 {
+				indentW := stackedDescIndent
+				if indentW > innerW-stackedDescIndent {
 					indentW = 2
 				}
 				room := innerW - indentW
-				if room < 4 {
+				if room < stackedDescIndent {
 					room = innerW
 					indentW = 0
 				}
@@ -353,8 +321,8 @@ func (h *HelpModal) LinesForTest() []string {
 	return out
 }
 
-// KeyCol returns the computed display cell width of the key column.
-func (h *HelpModal) KeyCol() int {
+// KeyColForTest returns the computed display cell width of the key column.
+func (h *HelpModal) KeyColForTest() int {
 	return h.keyCol
 }
 

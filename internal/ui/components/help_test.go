@@ -86,7 +86,7 @@ func TestDescribeShort_OverlayWording(t *testing.T) {
 
 func TestHelpModal_LongestDefaultBindingShownInFull(t *testing.T) {
 	h := components.NewHelpModal(keys.DefaultKeyMap(), 80, 24)
-	assert.GreaterOrEqual(t, h.KeyCol(), 13, "key column must accommodate ctrl+d/ctrl+u")
+	assert.GreaterOrEqual(t, h.KeyColForTest(), 13, "key column must accommodate ctrl+d/ctrl+u")
 
 	var allBody string
 	for _, l := range h.LinesForTest() {
@@ -103,7 +103,7 @@ func TestHelpModal_KeyWidthMeasuredInCellsNotBytes(t *testing.T) {
 		},
 	}
 	h := components.NewHelpModal(km, 80, 24)
-	assert.Equal(t, 11, h.KeyCol(), "key column must measure display cells (11), not bytes (15)")
+	assert.Equal(t, 11, h.KeyColForTest(), "key column must measure display cells (11), not bytes (15)")
 
 	var found bool
 	for _, l := range h.LinesForTest() {
@@ -152,7 +152,7 @@ func TestHelpModal_KeyColGrowsDynamically(t *testing.T) {
 		},
 	}
 	h := components.NewHelpModal(km, 80, 24)
-	assert.Equal(t, 16, h.KeyCol(), "key column must grow to widest key without 10-char clamp")
+	assert.Equal(t, 16, h.KeyColForTest(), "key column must grow to widest key without 10-char clamp")
 
 	var found bool
 	for _, l := range h.LinesForTest() {

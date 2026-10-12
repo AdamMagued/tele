@@ -61,6 +61,7 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 - A file attached to a reply no longer sits flush against the reply preview
   in the composer, and the attachment line takes the theme's background
   instead of showing the terminal's through it (#295).
+- Shortcuts overlay key bindings column dynamic width sizing and cell measurement (#291, #302).
 
 ## [1.11.10] - 2026-10-04
 
