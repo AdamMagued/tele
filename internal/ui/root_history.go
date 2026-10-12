@@ -24,6 +24,9 @@ func (m RootModel) updateNetworkMsg(msg tea.Msg) (RootModel, tea.Cmd) {
 			result, cmd := m.focusPane(FocusChatList)
 			return result.(RootModel), cmd
 		}
+		// A chat that is not a forum is never the forum on screen, so opening
+		// it is leaving that forum (#307).
+		m = m.leaveForum()
 		return m.openHistory(domain.HistoryKey{ChatID: msg.ChatID}, msg.Title)
 
 	case screens.OpenTopicMsg:

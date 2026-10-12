@@ -19,6 +19,11 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
   the next message while it was still below the pane. A message taller than
   half the pane is shown whole when `k` steps onto it, instead of being cut
   off at the bottom edge (#306, #305).
+- Selecting a folder, or opening a chat from search, a notification or a
+  profile, while a forum's topics fill the middle pane gives that pane back to
+  the chat list. The topics used to stay until `Esc`, with the folder's chats
+  loaded underneath them. What is open in the chat pane stays open (#307,
+  #300).
 
 ## [1.11.11] - 2026-10-12
 

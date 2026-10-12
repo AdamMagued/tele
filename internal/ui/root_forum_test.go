@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
@@ -234,4 +235,59 @@ func TestForum_EscInTheTopicListLeavesIt(t *testing.T) {
 	m = step(t, o, nm.(RootModel), cmd())
 
 	assert.Nil(t, m.forum)
+}
+
+// #307: selecting a folder is leaving the forum. The middle pane shows that
+// folder's chats at once, and the topic open in the chat pane stays open: a
+// folder filters the chat list, it does not move to another chat.
+func TestForum_SelectingAFolderLeavesIt(t *testing.T) {
+	o, m := forumRoot(t)
+	m = enterForum(t, o, m)
+	m = step(t, o, m, screens.OpenTopicMsg{ChatID: testForum, TopicID: 30, Title: "Design"})
+
+	m = step(t, o, m, screens.FolderSelectedMsg{Filter: &domain.FolderFilter{ID: 1, Title: "Work"}})
+
+	assert.Nil(t, m.forum)
+	assert.Equal(t, 1, m.activeFolder)
+	assert.Equal(t, domain.HistoryKey{ChatID: testForum, TopicID: 30}, m.currentHistory())
+}
+
+// #307: opening a chat that is not this forum is leaving it. Search, a
+// notification and a profile's "Send message" all open a chat this way.
+func TestForum_OpeningAnotherChatLeavesIt(t *testing.T) {
+	o, m := forumRoot(t)
+	m = enterForum(t, o, m)
+
+	m = step(t, o, m, screens.OpenChatMsg{ChatID: 60, Title: "Alice"})
+
+	assert.Nil(t, m.forum)
+	assert.Equal(t, domain.HistoryKey{ChatID: 60}, m.currentHistory())
+}
+
+// #307: picking the folder already shown leaves the forum too; it is how a
+// person asks to see that folder's chats.
+func TestForum_SelectingTheFolderAlreadyShownLeavesIt(t *testing.T) {
+	o, m := forumRoot(t)
+	m = enterForum(t, o, m)
+	require.Zero(t, m.activeFolder)
+
+	m = step(t, o, m, screens.FolderSelectedMsg{Filter: nil})
+
+	assert.Nil(t, m.forum)
+}
+
+// #307: the automatic fallback from an emptied Archive to All Chats is not the
+// person's choice, so it leaves the forum they are reading where it is.
+func TestForum_ArchiveFallbackKeepsIt(t *testing.T) {
+	o, m := forumRoot(t)
+	m = enterForum(t, o, m)
+	m.activeFolder = domainArchiveFolderID
+
+	m = step(t, o, m, project.Delta{Sub: m.chatListSub, ChatList: &project.ChatListDelta{
+		Kind:    project.ChatListFolders,
+		Folders: project.FolderCounts{ArchivePresent: false},
+	}})
+
+	require.Zero(t, m.activeFolder, "the fallback ran")
+	assert.NotNil(t, m.forum)
 }
