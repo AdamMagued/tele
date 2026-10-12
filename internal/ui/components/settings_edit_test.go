@@ -307,7 +307,7 @@ func TestSettingsEdit_KeybindingRowIsReadOnly(t *testing.T) {
 	assert.False(t, changed, "resetting a keybinding writes nothing")
 	assert.Contains(t, m.StatusForTest(), path)
 
-	m, changed = press(m, key('l'))
+	_, changed = press(m, key('l'))
 	assert.False(t, changed, "cycling a keybinding does nothing")
 }
 
