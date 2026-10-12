@@ -11,6 +11,15 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+### Fixed
+
+- Stepping onto a message taller than the chat pane with `j` or `k` shows it
+  from its first line, at the top of the pane; the rest is read with `↓`.
+  `j` used to scroll past its first lines, and stepping off it could select
+  the next message while it was still below the pane. A message taller than
+  half the pane is shown whole when `k` steps onto it, instead of being cut
+  off at the bottom edge (#306, #305).
+
 ## [1.11.11] - 2026-10-12
 
 ### Added

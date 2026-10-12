@@ -1,8 +1,11 @@
 package components_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -150,4 +153,72 @@ func TestMessageList_CursorUp_KeepsCursorCentered(t *testing.T) {
 	assert.Equal(t, 9, ml.SelectedMessageID())
 	assert.Equal(t, top1, rect2.Top, "cursor stays put; the viewport scrolls instead")
 	assert.InDelta(t, 15/2, top1, 1, "cursor sits near the vertical middle")
+}
+
+// withTallMessage returns makeMessages(n) with message id carrying lines lines
+// of text, so its bubble is taller than a small pane.
+func withTallMessage(n, id, lines int) []domain.Message {
+	msgs := makeMessages(n)
+	text := make([]string, lines)
+	for l := range text {
+		text[l] = fmt.Sprintf("line-%02d", l+1)
+	}
+	msgs[id-1].Text = strings.Join(text, "\n")
+	return msgs
+}
+
+// #306: stepping onto a message taller than the pane shows where it starts;
+// the rest is read by scrolling.
+func TestMessageList_CursorDown_PutsTallMessageTopAtPaneTop(t *testing.T) {
+	ml := components.NewMessageList(10, 40)
+	ml.SetMessages(withTallMessage(12, 6, 30))
+	for ml.SelectedMessageID() != 5 {
+		ml.CursorUp()
+	}
+	ml.CursorDown()
+	require.Equal(t, 6, ml.SelectedMessageID())
+	assert.Contains(t, ml.View(), "line-01")
+}
+
+// #306: stepping off a tall message scrolls as far as the next one needs, so
+// the selection never lands below the pane.
+func TestMessageList_CursorDown_FromTallMessageShowsTheNextOne(t *testing.T) {
+	ml := components.NewMessageList(10, 40)
+	ml.SetMessages(withTallMessage(12, 6, 30))
+	for ml.SelectedMessageID() != 6 {
+		ml.CursorUp()
+	}
+	ml.CursorDown()
+	require.Equal(t, 7, ml.SelectedMessageID())
+	assert.Contains(t, ml.View(), "msg 7")
+}
+
+// #306: stepping up onto a tall message also puts its top at the top of the
+// pane, instead of the middle that suits a short one.
+func TestMessageList_CursorUp_PutsTallMessageTopAtPaneTop(t *testing.T) {
+	ml := components.NewMessageList(10, 40)
+	ml.SetMessages(withTallMessage(12, 6, 30))
+	for ml.SelectedMessageID() != 7 {
+		ml.CursorUp()
+	}
+	ml.CursorUp()
+	require.Equal(t, 6, ml.SelectedMessageID())
+	view := ml.View()
+	assert.Contains(t, view, "line-01")
+	assert.NotContains(t, view, "msg 5", "nothing above the tall bubble is on screen")
+}
+
+// #306: a message taller than half the pane but no taller than the pane is
+// shown whole when stepped up onto, rather than cut off below the middle.
+func TestMessageList_CursorUp_ShowsMediumMessageWhole(t *testing.T) {
+	ml := components.NewMessageList(10, 40)
+	ml.SetMessages(withTallMessage(12, 6, 6))
+	for ml.SelectedMessageID() != 7 {
+		ml.CursorUp()
+	}
+	ml.CursorUp()
+	require.Equal(t, 6, ml.SelectedMessageID())
+	view := ml.View()
+	assert.Contains(t, view, "line-01")
+	assert.Contains(t, view, "line-06")
 }
