@@ -11,6 +11,25 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+### Changed
+
+- The first step towards tele 2.0, where one process holds the Telegram
+  connection and the terminal interface and the command line attach to it.
+  The interface now reaches the account only the way another process will:
+  through one link that outlives a log out, with everything it is told -
+  messages, notifications, progress, the login - on one stream in the order
+  it happened. Nothing should look different; anything that does is a bug
+  worth reporting (#309).
+- The login is followed by tele itself rather than by the screen, so the
+  step being asked, a clock that is off and a connection that failed are
+  shown to whatever attaches, whenever it attaches. A login answer meant for
+  a step that has already moved on is refused instead of being taken for the
+  next one (#309).
+- Folders arrive together with the chat list instead of on their own (#309).
+- Logging out finishes any request still under way as cancelled, instead of
+  letting it fail on whatever the log out closed under it. A request to end
+  an account that has already ended no longer touches the next one (#309).
+
 ## [1.11.13] - 2026-10-13
 
 ### Fixed
