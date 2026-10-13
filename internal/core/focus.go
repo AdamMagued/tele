@@ -90,29 +90,3 @@ func (r *focusRegistry) focused(chatID int64) bool {
 	}
 	return false
 }
-
-// Attachment is one client's handle on the owner. It carries the whole owner
-// command surface plus the client's own lifecycle: the focus it reports and the
-// detach that ends it. A client cannot report focus on another client's behalf,
-// because it never holds another client's handle.
-//
-// In v2 the embedded *Owner becomes a proxy over the socket and nothing above
-// changes: a client already talks to its own attachment rather than to a shared
-// owner (#183).
-type Attachment struct {
-	*Owner
-	id clientID
-}
-
-// Attach registers a client. The caller must Detach when it goes away, or the
-// owner goes on believing an abandoned chat is still on screen.
-func (o *Owner) Attach() *Attachment {
-	return &Attachment{Owner: o, id: o.focus.attach()}
-}
-
-// SetFocus reports the history this client is showing - a chat, or one topic
-// of a forum - and the zero key for none.
-func (a *Attachment) SetFocus(h domain.HistoryKey) { a.focus.set(a.id, h) }
-
-// Detach ends the attachment and drops the focus it held.
-func (a *Attachment) Detach() { a.focus.detach(a.id) }

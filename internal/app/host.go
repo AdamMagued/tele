@@ -69,6 +69,10 @@ func (a *App) openNext() (*account, uint64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	// The client attaches: the subscriptions and the focus it reports belong
+	// to it, everything else is the owner's (#192, #309). It ends with the
+	// owner.
+	acct.client = acct.owner.Attach()
 
 	a.mu.Lock()
 	a.acct, a.epoch = acct, epoch
@@ -83,9 +87,7 @@ func (a *App) openNext() (*account, uint64, error) {
 func (a *App) buildRoot(acct *account, first bool) ui.RootModel {
 	cfg := a.cfg()
 	root := ui.NewRootModel(a.verbose)
-	// The client attaches: the focus it reports belongs to it, everything else
-	// is the owner's (#192). It ends with the owner.
-	root = root.WithContext(acct.ctx).WithImageMode(acct.startup.imageMode).WithConfig(cfg).WithKeyMap(a.keyMap).WithOwner(acct.owner.Attach()).
+	root = root.WithContext(acct.ctx).WithImageMode(acct.startup.imageMode).WithConfig(cfg).WithKeyMap(a.keyMap).WithOwner(acct.client).
 		WithLogger(a.log).WithConfigReload(a.reloadConfig).WithSettingsStore(a.cfgStore).WithLogPath(a.logPath)
 	root.SetLoginModel(screens.NewLoginModel(acct.owner.AuthFlow()))
 	root.SetTmpDir(acct.tmpDir)
@@ -270,23 +272,17 @@ func (a *App) authBridge(acct *account, epoch uint64) func(context.Context) {
 	}
 }
 
-// deltaBridge carries what acct's owner publishes to its model.
+// deltaBridge carries what is addressed to acct's client to its model: the
+// client's one stream, and the clock skew until it moves into a projection.
 func (a *App) deltaBridge(acct *account, epoch uint64) func(context.Context) {
 	return func(ctx context.Context) {
-		owner := acct.owner
 		for {
 			var msg tea.Msg
 			select {
 			case <-ctx.Done():
 				return
-			case msg = <-owner.Deltas():
-			case msg = <-owner.Incoming():
-			case msg = <-owner.Notifications():
-			case msg = <-owner.Failures():
-			case msg = <-owner.Typing():
-			case msg = <-owner.Progress():
-			case msg = <-owner.Downloads():
-			case msg = <-owner.ClockSkew():
+			case msg = <-acct.client.Stream():
+			case msg = <-acct.owner.ClockSkew():
 			}
 			a.send(epoch, msg)
 		}

@@ -52,28 +52,18 @@ func notifyConfig(desktop, toast bool) *config.Config {
 	return cfg
 }
 
-func recvDelta(t *testing.T, ch <-chan project.Delta) (project.Delta, bool) {
-	t.Helper()
-	select {
-	case d := <-ch:
-		return d, true
-	case <-time.After(time.Second):
-		return project.Delta{}, false
-	}
-}
-
 func TestUpdateLoop_AppliesAndPublishes(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1, Title: "A"})
-	o.Subscribe(project.ChatListWindow{Limit: 10})
-	_, _ = recvDelta(t, o.Deltas()) // the subscription's initial Reset
+	testClient(o).Subscribe(project.ChatListWindow{Limit: 10})
+	_, _ = recvDelta(t, testClient(o)) // the subscription's initial Reset
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go o.RunUpdates(ctx)
 
 	events <- store.Event{Kind: store.EventNewMessage, Message: domain.Message{ID: 5, ChatID: 1, Text: "hi"}}
 
-	d, got := recvDelta(t, o.Deltas())
+	d, got := recvDelta(t, testClient(o))
 	require.True(t, got, "the owner must publish a delta")
 	require.NotNil(t, d.ChatList)
 	assert.Equal(t, 1, d.ChatList.Row.Unread)
@@ -87,8 +77,8 @@ func TestUpdateLoop_AppliesAndPublishes(t *testing.T) {
 func TestUpdateLoop_NoopEventPublishesNothing(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1, ReadInboxMaxID: 10, UnreadCount: 3})
-	o.Subscribe(project.ChatListWindow{Limit: 10})
-	_, _ = recvDelta(t, o.Deltas())
+	testClient(o).Subscribe(project.ChatListWindow{Limit: 10})
+	_, _ = recvDelta(t, testClient(o))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go o.RunUpdates(ctx)
@@ -98,13 +88,13 @@ func TestUpdateLoop_NoopEventPublishesNothing(t *testing.T) {
 	// not merely observe a slow loop.
 	events <- store.Event{Kind: store.EventReadInbox, ChatID: 1, ReadMaxID: 20}
 
-	d, got := recvDelta(t, o.Deltas())
+	d, got := recvDelta(t, testClient(o))
 	require.True(t, got)
 	require.NotNil(t, d.ChatList)
 	assert.Equal(t, project.ChatListRow, d.ChatList.Kind)
 	assert.Zero(t, d.ChatList.Row.Unread, "the advancing receipt cleared the count")
 
-	_, more := recvDelta(t, o.Deltas())
+	_, more := recvDelta(t, testClient(o))
 	assert.False(t, more, "the no-op receipt must not have produced a delta")
 }
 
@@ -122,8 +112,8 @@ func TestUpdateLoop_ChangeOutsideEveryWindowPublishesNothing(t *testing.T) {
 			LastMessage: &domain.Message{ID: i, Date: time.Unix(int64(1000-i), 0)},
 		})
 	}
-	o.Subscribe(project.ChatListWindow{Offset: 0, Limit: 5})
-	_, _ = recvDelta(t, o.Deltas())
+	testClient(o).Subscribe(project.ChatListWindow{Offset: 0, Limit: 5})
+	_, _ = recvDelta(t, testClient(o))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go o.RunUpdates(ctx)
@@ -131,12 +121,12 @@ func TestUpdateLoop_ChangeOutsideEveryWindowPublishesNothing(t *testing.T) {
 	events <- store.Event{Kind: store.EventUserPresence, ChatID: 25, Online: true}
 	events <- store.Event{Kind: store.EventUserPresence, ChatID: 3, Online: true}
 
-	d, got := recvDelta(t, o.Deltas())
+	d, got := recvDelta(t, testClient(o))
 	require.True(t, got)
 	require.NotNil(t, d.ChatList)
 	assert.Equal(t, int64(3), d.ChatList.Row.ID, "only the in-window chat produced a delta")
 
-	_, more := recvDelta(t, o.Deltas())
+	_, more := recvDelta(t, testClient(o))
 	assert.False(t, more)
 }
 
@@ -161,19 +151,17 @@ func TestNotify_OneEventFeedsBothSinks(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hello there", Date: time.Now()}})
 
 	require.Len(t, n.calls, 1, "exactly one OS notification")
-	select {
-	case got := <-o.Notifications():
-		assert.Equal(t, n.calls[0].title, got.Title, "same value, two sinks")
-		assert.Equal(t, n.calls[0].body, got.Body)
-		assert.Equal(t, int64(2), got.ChatID)
-	default:
-		t.Fatal("expected a Notification on the stream")
-	}
+	got := only[Notification](queued(c))
+	require.Len(t, got, 1, "expected a Notification on the stream")
+	assert.Equal(t, n.calls[0].title, got[0].Title, "same value, two sinks")
+	assert.Equal(t, n.calls[0].body, got[0].Body)
+	assert.Equal(t, int64(2), got[0].ChatID)
 }
 
 // Delivery is at least once, so the wire and a recovered difference can both
@@ -185,13 +173,15 @@ func TestNotify_SecondCopyOfAMessageIsSilent(t *testing.T) {
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
 	evt := store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ID: 40, ChatID: 2, Text: "hello there", Date: time.Now()}}
+	c := o.Attach()
 
 	o.handleEvent(evt)
 	o.handleEvent(evt)
 
+	evs := queued(c)
 	assert.Len(t, n.calls, 1, "one arrival, one banner")
-	assert.Equal(t, 1, len(o.Notifications()), "one toast")
-	assert.Equal(t, 1, len(o.Incoming()), "one row flash")
+	assert.Len(t, only[Notification](evs), 1, "one toast")
+	assert.Len(t, only[Incoming](evs), 1, "one row flash")
 }
 
 // The two gates are different on purpose: mute silences the interruption but
@@ -200,22 +190,17 @@ func TestNotify_MutedChatStillFlashesTheRow(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob", IsMuted: true})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hey", Date: time.Now()}})
 
+	evs := queued(c)
 	assert.Empty(t, n.calls, "a muted chat raises no banner")
-	select {
-	case got := <-o.Notifications():
-		t.Fatalf("a muted chat must raise no toast either, got %+v", got)
-	default:
-	}
-	select {
-	case in := <-o.Incoming():
-		assert.Equal(t, int64(2), in.ChatID, "the row still flashes")
-	default:
-		t.Fatal("expected an Incoming for the row flash")
-	}
+	assert.Empty(t, only[Notification](evs), "a muted chat must raise no toast either")
+	in := only[Incoming](evs)
+	require.Len(t, in, 1, "expected an Incoming for the row flash")
+	assert.Equal(t, int64(2), in[0].ChatID, "the row still flashes")
 }
 
 // Each sink is switched on its own. The decision is made either way: what the
@@ -226,17 +211,15 @@ func TestNotify_DesktopSinkOffLeavesTheToast(t *testing.T) {
 	o, st := newTestOwnerNotified(t, n)
 	o.SetConfig(notifyConfig(false, true))
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hello there", Date: time.Now()}})
 
 	assert.Empty(t, n.calls, "nothing reaches the operating system")
-	select {
-	case got := <-o.Notifications():
-		assert.Equal(t, "hello there", got.Body, "and the toast is unchanged")
-	default:
-		t.Fatal("expected a Notification on the stream")
-	}
+	got := only[Notification](queued(c))
+	require.Len(t, got, 1, "expected a Notification on the stream")
+	assert.Equal(t, "hello there", got[0].Body, "and the toast is unchanged")
 }
 
 func TestNotify_ToastSinkOffLeavesTheDesktopNotification(t *testing.T) {
@@ -244,17 +227,14 @@ func TestNotify_ToastSinkOffLeavesTheDesktopNotification(t *testing.T) {
 	o, st := newTestOwnerNotified(t, n)
 	o.SetConfig(notifyConfig(true, false))
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hello there", Date: time.Now()}})
 
 	require.Len(t, n.calls, 1, "the desktop notification is unchanged")
 	assert.Equal(t, "hello there", n.calls[0].body)
-	select {
-	case got := <-o.Notifications():
-		t.Fatalf("no client should be sent a toast, got %+v", got)
-	default:
-	}
+	assert.Empty(t, only[Notification](queued(c)), "no client should be sent a toast")
 }
 
 // Both off is a legal state and the whole point of #249. The chat list is not a
@@ -264,44 +244,33 @@ func TestNotify_BothSinksOffStillFlashesTheRow(t *testing.T) {
 	o, st := newTestOwnerNotified(t, n)
 	o.SetConfig(notifyConfig(false, false))
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hey", Date: time.Now()}})
 
+	evs := queued(c)
 	assert.Empty(t, n.calls, "no desktop notification")
-	select {
-	case got := <-o.Notifications():
-		t.Fatalf("no toast either, got %+v", got)
-	default:
-	}
-	select {
-	case in := <-o.Incoming():
-		assert.Equal(t, int64(2), in.ChatID, "the row still flashes")
-	default:
-		t.Fatal("expected an Incoming for the row flash")
-	}
+	assert.Empty(t, only[Notification](evs), "no toast either")
+	in := only[Incoming](evs)
+	require.Len(t, in, 1, "expected an Incoming for the row flash")
+	assert.Equal(t, int64(2), in[0].ChatID, "the row still flashes")
 }
 
 func TestNotify_FocusedChatDoesNeither(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	o.Attach().SetFocus(domain.HistoryKey{ChatID: 2})
+	c := o.Attach()
+	c.SetFocus(domain.HistoryKey{ChatID: 2})
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hey", Date: time.Now()}})
 
+	evs := queued(c)
 	assert.Empty(t, n.calls)
-	select {
-	case <-o.Notifications():
-		t.Fatal("the chat on screen must not toast")
-	default:
-	}
-	select {
-	case <-o.Incoming():
-		t.Fatal("the chat on screen must not flash")
-	default:
-	}
+	assert.Empty(t, only[Notification](evs), "the chat on screen must not toast")
+	assert.Empty(t, only[Incoming](evs), "the chat on screen must not flash")
 }
 
 // A group reaction reaches the client as a decision like any other. The client
@@ -311,30 +280,25 @@ func TestNotify_GroupReactionFeedsBothSinks(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{
 		Kind: store.EventReactionsUpdate, ChatID: 2, MsgID: 10,
 		ReactionsUnread: true, ReactionEmoji: "❤", ReactionDate: time.Now(),
 	})
 
+	evs := queued(c)
 	require.Len(t, n.calls, 1, "exactly one OS notification")
 	assert.Equal(t, "reacted ❤ to your message", n.calls[0].body)
-	select {
-	case got := <-o.Notifications():
-		assert.Equal(t, n.calls[0].title, got.Title, "same value, two sinks")
-		assert.Equal(t, n.calls[0].body, got.Body)
-		assert.Equal(t, int64(2), got.ChatID, "the toast opens this chat when clicked")
-	default:
-		t.Fatal("expected a Notification on the stream")
-	}
+	got := only[Notification](evs)
+	require.Len(t, got, 1, "expected a Notification on the stream")
+	assert.Equal(t, n.calls[0].title, got[0].Title, "same value, two sinks")
+	assert.Equal(t, n.calls[0].body, got[0].Body)
+	assert.Equal(t, int64(2), got[0].ChatID, "the toast opens this chat when clicked")
 	// A reaction does not reorder the chat list, so there is nothing for the eye
 	// to follow and no row flash to publish (#203). The unread-reactions badge is
 	// the standing cue; the toast is the interruption.
-	select {
-	case in := <-o.Incoming():
-		t.Fatalf("a reaction must not flash the row, got %+v", in)
-	default:
-	}
+	assert.Empty(t, only[Incoming](evs), "a reaction must not flash the row")
 }
 
 // The 1:1 form: Telegram delivers a peer's reaction as a hidden edit carrying
@@ -343,6 +307,7 @@ func TestNotify_DMReactionFeedsBothSinks(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{
 		Kind: store.EventEditMessage,
@@ -352,19 +317,13 @@ func TestNotify_DMReactionFeedsBothSinks(t *testing.T) {
 		ReactionEmoji: "👍", ReactionDate: time.Now(),
 	})
 
+	evs := queued(c)
 	require.Len(t, n.calls, 1, "exactly one OS notification")
 	assert.Equal(t, "reacted 👍 to your message", n.calls[0].body)
-	select {
-	case got := <-o.Notifications():
-		assert.Equal(t, n.calls[0].title, got.Title, "same value, two sinks")
-		assert.Equal(t, n.calls[0].body, got.Body)
-		assert.Equal(t, int64(2), got.ChatID)
-	default:
-		t.Fatal("expected a Notification on the stream")
-	}
-	select {
-	case in := <-o.Incoming():
-		t.Fatalf("a reaction must not flash the row, got %+v", in)
-	default:
-	}
+	got := only[Notification](evs)
+	require.Len(t, got, 1, "expected a Notification on the stream")
+	assert.Equal(t, n.calls[0].title, got[0].Title, "same value, two sinks")
+	assert.Equal(t, n.calls[0].body, got[0].Body)
+	assert.Equal(t, int64(2), got[0].ChatID)
+	assert.Empty(t, only[Incoming](evs), "a reaction must not flash the row")
 }

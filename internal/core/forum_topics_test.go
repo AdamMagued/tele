@@ -229,7 +229,7 @@ func TestOwner_ScrollingATopicFetchesThatTopicsHistory(t *testing.T) {
 	s.Store().AppendMessage(topicHistory(12, 20)[0])
 	h := domain.HistoryKey{ChatID: forumChat, TopicID: 12}
 
-	o.Subscribe(project.HistoryWindow{ChatID: forumChat, TopicID: 12, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 10})
+	testClient(o).Subscribe(project.HistoryWindow{ChatID: forumChat, TopicID: 12, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 10})
 
 	require.Eventually(t, func() bool { return len(s.Store().Messages(h)) == 4 }, time.Second, 5*time.Millisecond)
 	assert.Equal(t, []repliesCall{{topic: 12, offsetID: 20}}, c.repliesCalls())
@@ -242,7 +242,7 @@ func TestOwner_GeneralIsFetchedAsATopicToo(t *testing.T) {
 	o, s := forumOwner(t, c)
 	h := domain.HistoryKey{ChatID: forumChat, TopicID: domain.GeneralTopicID}
 
-	o.Subscribe(project.HistoryWindow{ChatID: forumChat, TopicID: domain.GeneralTopicID, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 10})
+	testClient(o).Subscribe(project.HistoryWindow{ChatID: forumChat, TopicID: domain.GeneralTopicID, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 10})
 
 	require.Eventually(t, func() bool { return len(s.Store().Messages(h)) == 1 }, time.Second, 5*time.Millisecond)
 	assert.Equal(t, []repliesCall{{topic: domain.GeneralTopicID, offsetID: 0}}, c.repliesCalls())
@@ -260,7 +260,7 @@ func TestOwner_ClosingAForumsGapRepairsEveryTopic(t *testing.T) {
 	s.Store().SetMessages(forumChat, append(topicHistory(12, 1, 2), topicHistory(30, 3)...))
 	s.Store().MarkGap(forumChat, 3)
 
-	o.Subscribe(project.HistoryWindow{ChatID: forumChat, TopicID: 12, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 1})
+	testClient(o).Subscribe(project.HistoryWindow{ChatID: forumChat, TopicID: 12, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 1})
 
 	require.Eventually(t, func() bool {
 		_, open := s.Store().Gap(forumChat)
@@ -295,12 +295,12 @@ func TestOwner_ScrollingTheTopicListLoadsTheNextPage(t *testing.T) {
 	require.NoError(t, o.Bootstrap(context.Background()))
 	require.Eventually(t, func() bool { return len(s.Store().Topics(forumChat)) == 2 }, time.Second, 5*time.Millisecond)
 
-	id := o.Subscribe(project.TopicListWindow{ChatID: forumChat, Limit: 10})
+	id := testClient(o).Subscribe(project.TopicListWindow{ChatID: forumChat, Limit: 10})
 
 	require.Eventually(t, func() bool { return len(s.Store().Topics(forumChat)) == 3 }, time.Second, 5*time.Millisecond)
 	assert.Equal(t, []internaltg.TopicsOffset{{Date: time.Unix(200, 0), MsgID: 300, TopicID: 30}}, c.offsetsAsked())
 
-	o.MoveWindow(id, project.TopicListWindow{ChatID: forumChat, Limit: 20})
+	testClient(o).MoveWindow(id, project.TopicListWindow{ChatID: forumChat, Limit: 20})
 	time.Sleep(30 * time.Millisecond)
 	assert.Len(t, c.offsetsAsked(), 1, "every topic is held, so there is nothing more to ask for")
 }

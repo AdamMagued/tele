@@ -142,6 +142,7 @@ func TestWorker_PublishesAggregateProgressAcrossTheGroup(t *testing.T) {
 	c := &stubClient{}
 	o, _ := newCmdOwner(t, c)
 	o.SetOutbox(newOutboxStore(t))
+	cl := o.Attach()
 	ctx := runWorker(t, o)
 
 	require.NoError(t, o.SendMedia(ctx, MediaSendRequest{
@@ -153,17 +154,13 @@ func TestWorker_PublishesAggregateProgressAcrossTheGroup(t *testing.T) {
 
 	var seen Progress
 	waitFor(t, "no progress was published for the second part", func() bool {
-		for {
-			select {
-			case p := <-o.Progress():
-				if p.Part == 2 {
-					seen = p
-					return true
-				}
-			default:
-				return false
+		for _, p := range only[Progress](queued(cl)) {
+			if p.Part == 2 {
+				seen = p
+				return true
 			}
 		}
+		return false
 	})
 	assert.Equal(t, 2, seen.Parts)
 	assert.Equal(t, int64(200), seen.Total, "Total is the whole entry, not one file")

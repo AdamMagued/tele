@@ -21,8 +21,10 @@ import (
 // setting with SetConfig, which is what a reload hands the owner, and checks
 // that the next thing the owner does follows it (#239).
 
-// arrive delivers the message with the given id from Bob.
+// arrive delivers the message with the given id from Bob, with the test client
+// attached to hear it.
 func arrive(o *Owner, id int) {
+	testClient(o)
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ID: id, ChatID: 2, Text: "hello there", Date: time.Now()}})
 }
@@ -30,12 +32,11 @@ func arrive(o *Owner, id int) {
 // toasted reports whether a notification was published for a client to draw,
 // and takes it off the stream.
 func toasted(o *Owner) (Notification, bool) {
-	select {
-	case n := <-o.Notifications():
-		return n, true
-	default:
+	ns := only[Notification](queued(testClient(o)))
+	if len(ns) == 0 {
 		return Notification{}, false
 	}
+	return ns[0], true
 }
 
 func TestTakesHold_ui_notifications_desktop(t *testing.T) {

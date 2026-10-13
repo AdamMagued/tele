@@ -21,17 +21,17 @@ func TestOwner_DeleteFromAnotherDevice_LeavesTheWindow(t *testing.T) {
 		{ID: 10, ChatID: 1, Text: "one", Date: time.Unix(1, 0)},
 		{ID: 11, ChatID: 1, Text: "two", Date: time.Unix(2, 0)},
 	})
-	o.Subscribe(project.HistoryWindow{
+	testClient(o).Subscribe(project.HistoryWindow{
 		ChatID: 1, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 2,
 	})
-	recvDelta(t, o.Deltas()) // opening Reset
+	recvDelta(t, testClient(o)) // opening Reset
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go o.RunUpdates(ctx)
 
 	events <- store.Event{Kind: store.EventDeleteMessages, MsgIDs: []int{11}}
 
-	d, ok := recvDelta(t, o.Deltas())
+	d, ok := recvDelta(t, testClient(o))
 	require.True(t, ok, "the deletion must reach the open chat")
 	require.NotNil(t, d.History)
 	assert.Equal(t, project.HistoryRemove, d.History.Kind)
@@ -46,17 +46,17 @@ func TestOwner_DeleteOfAMessageWeSent_LeavesTheWindow(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1, Title: "Ada", Peer: domain.Peer{ID: 1, Type: domain.PeerUser}})
 	st.AppendMessage(domain.Message{ID: 42, ChatID: 1, Text: "mine", IsOut: true, Date: time.Unix(1, 0)})
-	o.Subscribe(project.HistoryWindow{
+	testClient(o).Subscribe(project.HistoryWindow{
 		ChatID: 1, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 5,
 	})
-	recvDelta(t, o.Deltas())
+	recvDelta(t, testClient(o))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go o.RunUpdates(ctx)
 
 	events <- store.Event{Kind: store.EventDeleteMessages, MsgIDs: []int{42}}
 
-	d, ok := recvDelta(t, o.Deltas())
+	d, ok := recvDelta(t, testClient(o))
 	require.True(t, ok, "deleting a message we sent must reach the open chat")
 	require.NotNil(t, d.History)
 	assert.Equal(t, project.HistoryRemove, d.History.Kind)

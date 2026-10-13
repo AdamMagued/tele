@@ -18,24 +18,26 @@ import (
 // come.
 //
 // One fetch per subscription is in flight at a time (issue #120).
-func (o *Owner) fill(ctx context.Context, id project.SubID, w project.HistoryWindow) {
-	if !o.beginFetch(id) {
+func (o *Owner) fill(ctx context.Context, a *Attachment, id project.SubID, w project.HistoryWindow) {
+	key := subKey{client: a.id, sub: id}
+	if !o.beginFetch(key) {
 		return
 	}
-	defer o.endFetch(id)
+	defer o.endFetch(key)
 
 	o.forwardFill(ctx, w.ChatID)
 	// Re-read the window: the repair may have filled it, and asking again costs
 	// a projection build against messages already in memory.
 	if needsBackfill(project.BuildHistory(o.reader(), w), w) {
-		o.backfill(ctx, w)
+		o.backfill(ctx, a, w)
 	}
 }
 
 // backfill fetches older history for a chat subscription whose window the store
 // could not fill and applies it to state; the registry then emits the resulting
 // delta through the same path as any other change. Caller holds the fetch guard.
-func (o *Owner) backfill(ctx context.Context, w project.HistoryWindow) {
+// A failure is told to a, the client whose window it was: nobody else asked.
+func (o *Owner) backfill(ctx context.Context, a *Attachment, w project.HistoryWindow) {
 	chat, ok := o.state.Store().GetChat(w.ChatID)
 	if !ok {
 		return
@@ -63,7 +65,7 @@ func (o *Owner) backfill(ctx context.Context, w project.HistoryWindow) {
 		o.log.Warn("history backfill failed", zap.Int64("chat", w.ChatID), zap.Error(err))
 		// The client asked for a window it cannot fill itself, so it has to be
 		// told: otherwise the pane waits on a load that will never arrive.
-		o.publishFailure(Failure{ChatID: w.ChatID, Op: "load history", Err: err})
+		a.tell(Failure{ChatID: w.ChatID, Op: "load history", Err: err})
 		return
 	}
 	// The store merges under its own lock, so a message that arrives mid-fetch
@@ -242,20 +244,20 @@ func (o *Owner) tailReload(ctx context.Context, chat domain.Chat) {
 		zap.Int64("chat", chat.ID), zap.Int("kept", len(page)))
 }
 
-func (o *Owner) beginFetch(id project.SubID) bool {
+func (o *Owner) beginFetch(key subKey) bool {
 	o.fetchMu.Lock()
 	defer o.fetchMu.Unlock()
-	if o.fetching[id] {
+	if o.fetching[key] {
 		return false
 	}
-	o.fetching[id] = true
+	o.fetching[key] = true
 	return true
 }
 
-func (o *Owner) endFetch(id project.SubID) {
+func (o *Owner) endFetch(key subKey) {
 	o.fetchMu.Lock()
 	defer o.fetchMu.Unlock()
-	delete(o.fetching, id)
+	delete(o.fetching, key)
 }
 
 func (o *Owner) beginRepair(chatID int64) bool {

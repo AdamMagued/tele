@@ -36,6 +36,9 @@ type ownerStub struct {
 	focusKeys []domain.HistoryKey
 	// forwardTargets records where each forward was asked to go.
 	forwardTargets []domain.HistoryKey
+	// lastSub is the last subscription id handed out: ids are the client's to
+	// choose and are never reused (#309).
+	lastSub project.SubID
 
 	// calls records the commands the UI issued, so a test can assert on what
 	// was asked for rather than on how the result was rendered. err is what
@@ -154,7 +157,11 @@ func (o *ownerStub) enqueue(d project.Delta) bool {
 	return true
 }
 
-func (o *ownerStub) Subscribe(w project.Window) project.SubID { return o.reg.Subscribe(w) }
+func (o *ownerStub) Subscribe(w project.Window) project.SubID {
+	o.lastSub++
+	o.reg.Subscribe(o.lastSub, w)
+	return o.lastSub
+}
 
 func (o *ownerStub) MoveWindow(id project.SubID, w project.Window) { o.reg.MoveWindow(id, w) }
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/core/outbox"
-	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/core/state"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/mediacache"
@@ -43,25 +42,16 @@ type Owner struct {
 	notifier Notifier
 	authFlow *internaltg.AuthFlow
 
-	events   <-chan store.Event
-	deltas   chan project.Delta
-	incoming chan Incoming
-	failures chan Failure
-	typing   chan Typing
-	progress chan Progress
-	// downloads carries progress for the saves a client asked to watch (#204).
-	downloads chan DownloadProgress
+	events <-chan store.Event
+	// clients are the attached clients, each with its own subscriptions and
+	// its own stream. Nothing the owner says is shared between them on the way
+	// out (#309).
+	clientsMu sync.Mutex
+	clients   map[clientID]*Attachment
 	// clockSkew carries the latest clock skew to the client (#277).
 	clockSkew *clockSkewOut
-	// notifications carries decisions the owner has already made, so a client
-	// renders rather than judges (#192).
-	notifications chan Notification
-	registry      *project.Registry
-	// resyncArmed is set while a rebuild is scheduled to repair a dropped delta,
-	// so a burst of drops schedules one rebuild rather than one each (#276).
-	resyncArmed atomic.Bool
-	readyCh     chan struct{}
-	onAuthFn    func(userID int64, username string)
+	readyCh   chan struct{}
+	onAuthFn  func(userID int64, username string)
 	// selfName is the logged-in user's username, once known: a log out names
 	// whose account it ends (#297).
 	selfName atomic.Pointer[string]
@@ -83,9 +73,10 @@ type Owner struct {
 
 	// fetching guards one in-flight history fetch per subscription: rapid
 	// scroll-up would otherwise fire several identical fetches whose duplicate
-	// chunks stack into a repeating date range (issue #120).
+	// chunks stack into a repeating date range (issue #120). A subscription is
+	// named by its client too: two clients choose their ids apart.
 	fetchMu  sync.Mutex
-	fetching map[project.SubID]bool
+	fetching map[subKey]bool
 	// repairing guards one in-flight gap repair per chat. A repair belongs to
 	// the chat rather than to a window: it is started by opening one, and also
 	// by Telegram saying a channel fell behind while nobody was looking at it.
@@ -131,17 +122,11 @@ func New(cfg *config.Config, log *zap.Logger, st *state.State, client Connection
 		client:        client,
 		notifier:      n,
 		authFlow:      internaltg.NewAuthFlow(),
-		deltas:        make(chan project.Delta, 256),
-		incoming:      make(chan Incoming, 32),
-		failures:      make(chan Failure, 32),
-		typing:        make(chan Typing, 32),
-		progress:      make(chan Progress, 32),
-		downloads:     make(chan DownloadProgress, 32),
+		clients:       make(map[clientID]*Attachment),
 		clockSkew:     newClockSkewOut(),
-		notifications: make(chan Notification, 32),
 		readyCh:       make(chan struct{}),
 		endRequests:   make(chan EndReason, 1),
-		fetching:      make(map[project.SubID]bool),
+		fetching:      make(map[subKey]bool),
 		repairing:     make(map[int64]bool),
 		focus:         newFocusRegistry(),
 		outboxWake:    make(chan struct{}, 1),
@@ -149,10 +134,7 @@ func New(cfg *config.Config, log *zap.Logger, st *state.State, client Connection
 	}
 	o.ctx, o.cancel = context.WithCancel(context.Background())
 	o.cfg.Store(cfg)
-	// Built from the owner, not from the store alone: the projection reads the
-	// send queue too, and the queue arrives later through SetOutbox (#193).
-	o.registry = project.NewRegistry(projectionReader{Store: st.Store(), owner: o}, o.emit)
-	o.media = newMediaFetcher(client, st, log, o.publishDownload)
+	o.media = newMediaFetcher(client, st, log)
 	o.avatars = newAvatarFetcher(client, log)
 	if client != nil {
 		o.events = client.Updates()
@@ -242,18 +224,6 @@ func (o *Owner) SetAvatarCache(c *mediacache.Cache) { o.avatars.cache = c }
 // repaint; see mediacache.Cache.Path.
 func (o *Owner) FetchMedia(ctx context.Context, chatID int64, msgID int, slot domain.MediaSlot) (string, error) {
 	return o.media.Fetch(ctx, chatID, msgID, slot)
-}
-
-// SaveMedia streams the named media into destDir, bypassing the cache, and
-// returns the path it actually wrote. The owner picks the name: it follows from
-// the document's own name or its MIME type, which is domain knowledge rather
-// than rendering.
-//
-// A non-empty ref asks for progress: it comes back on Downloads, under that
-// ref, each time the whole percentage changes. Media of no known size reports
-// nothing, since there is no percentage to give (#204).
-func (o *Owner) SaveMedia(ctx context.Context, chatID int64, msgID int, slot domain.MediaSlot, destDir, ref string) (string, error) {
-	return o.media.Save(ctx, chatID, msgID, slot, destDir, ref)
 }
 
 // InvalidateMedia drops a cached file a client could not decode, so the next

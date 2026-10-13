@@ -127,16 +127,14 @@ func TestSetTyping_InATopicNamesIt(t *testing.T) {
 // told which.
 func TestTypingInATopicIsReportedWithIt(t *testing.T) {
 	o := forumCmdOwner(t, &stubClient{})
+	c := o.Attach()
 
 	o.handleEvent(store.Event{Kind: store.EventTyping, ChatID: forumChat, TopicID: 12, TypingAction: domain.TypingActionTyping})
 
-	select {
-	case got := <-o.Typing():
-		assert.Equal(t, int64(forumChat), got.ChatID)
-		assert.Equal(t, 12, got.TopicID)
-	default:
-		t.Fatal("no typing reported")
-	}
+	got := only[Typing](queued(c))
+	require.Len(t, got, 1, "no typing reported")
+	assert.Equal(t, int64(forumChat), got[0].ChatID)
+	assert.Equal(t, 12, got[0].TopicID)
 }
 
 // A forward into a forum goes into a topic, and the comment that precedes it

@@ -11,14 +11,17 @@ import "sync"
 // registry.
 type Emit func(Delta) bool
 
-// Registry holds the live subscriptions and the contents each was last told
-// about. It is the only stateful piece of this package: builders and diffs are
-// pure, so everything that can go wrong concentrates here.
+// Registry holds one client's live subscriptions and the contents each was last
+// told about. It is the only stateful piece of this package: builders and diffs
+// are pure, so everything that can go wrong concentrates here.
+//
+// It belongs to one client, and the ids in it are the client's: a client names
+// a subscription when it makes one, so subscribing never waits for an answer
+// (#309).
 type Registry struct {
 	mu     sync.Mutex
 	reader Reader
 	emit   Emit
-	next   SubID
 	subs   map[SubID]*sub
 }
 
@@ -33,16 +36,15 @@ func NewRegistry(r Reader, emit Emit) *Registry {
 	return &Registry{reader: r, emit: emit, subs: make(map[SubID]*sub)}
 }
 
-// Subscribe registers a window and replies with its current contents, so a
-// resubscribe is a full resync and no snapshot concept is needed.
-func (g *Registry) Subscribe(w Window) SubID {
+// Subscribe registers a window under the id the client chose and replies with
+// its current contents, so a resubscribe is a full resync and no snapshot
+// concept is needed. An id already in use is replaced: the client never reuses
+// one, so a second use can only be a resubscribe.
+func (g *Registry) Subscribe(id SubID, w Window) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.next++
-	id := g.next
 	g.subs[id] = &sub{window: w}
 	g.send(g.rebuild(id))
-	return id
 }
 
 // MoveWindow replaces a subscription's window. It carries a whole window rather

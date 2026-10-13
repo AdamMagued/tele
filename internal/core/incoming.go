@@ -1,6 +1,10 @@
 package core
 
 import (
+	"fmt"
+
+	"go.uber.org/zap"
+
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
 )
@@ -49,19 +53,33 @@ type Typing struct {
 	Label   string
 }
 
-// Incoming is the event stream a client renders alongside its projections.
-func (o *Owner) Incoming() <-chan Incoming { return o.incoming }
-
-// Typing reports composing activity in the chats a client may be showing.
-func (o *Owner) Typing() <-chan Typing { return o.typing }
-
-func (o *Owner) publishTyping(t Typing) {
-	select {
-	case o.typing <- t:
-	default:
-		o.log.Warn("typing event dropped: client is not draining")
+// broadcast tells every attached client that something happened. Whoever was
+// not attached at that moment never hears it, which is what makes it an event
+// rather than state. A client that stopped draining loses it too: nothing may
+// stall the owner, and no later delta is stated against an event. A quiet event
+// is dropped without a log line, for the ones frequent enough that a line per
+// drop would bury the log.
+func (o *Owner) broadcast(ev any, quiet bool) {
+	for _, a := range o.attached() {
+		if !a.offer(ev) && !quiet {
+			a.dropped(ev)
+		}
 	}
 }
+
+// tell tells this client alone that something happened, for an event that is
+// the course of its own request.
+func (a *Attachment) tell(ev any) {
+	if !a.offer(ev) {
+		a.dropped(ev)
+	}
+}
+
+func (a *Attachment) dropped(ev any) {
+	a.log.Warn("event dropped: client is not draining", zap.String("event", fmt.Sprintf("%T", ev)))
+}
+
+func (o *Owner) publishTyping(t Typing) { o.broadcast(t, false) }
 
 // Progress is how far a queued media send has uploaded.
 //
@@ -82,9 +100,6 @@ type Progress struct {
 	Total int64
 }
 
-// Progress reports upload advance for the queued sends a client may be showing.
-func (o *Owner) Progress() <-chan Progress { return o.progress }
-
 // DownloadProgress is how far a save the client asked to watch has come. It is
 // addressed to the call rather than to every client: Ref is whatever the caller
 // passed to SaveMedia, and over a socket it is the call's own id. Like upload
@@ -96,55 +111,20 @@ type DownloadProgress struct {
 	Total int64
 }
 
-// Downloads reports progress for saves that were given a ref.
-func (o *Owner) Downloads() <-chan DownloadProgress { return o.downloads }
+// publishProgress goes to every client: an entry being uploaded is in the send
+// queue every client may be showing. It is quiet: under a large upload a log
+// line per drop would be thousands of lines about a repaint nobody missed.
+func (o *Owner) publishProgress(p Progress) { o.broadcast(p, true) }
 
-// publishDownload drops rather than blocks, and quietly, for the reason
-// publishProgress does.
-func (o *Owner) publishDownload(p DownloadProgress) {
-	select {
-	case o.downloads <- p:
-	default:
-	}
-}
+// publishFailure tells every client about work the owner gave up on that
+// belongs to all of them, such as a send the shared queue could not deliver. A
+// failure of one client's own request is told to that client instead.
+func (o *Owner) publishFailure(f Failure) { o.broadcast(f, false) }
 
-// publishProgress drops rather than blocks. Unlike typing it does not log the
-// drop: under a large upload that would be thousands of lines about a repaint
-// nobody missed.
-func (o *Owner) publishProgress(p Progress) {
-	select {
-	case o.progress <- p:
-	default:
-	}
-}
-
-// Failures reports operations the owner could not complete.
-func (o *Owner) Failures() <-chan Failure { return o.failures }
-
-func (o *Owner) publishFailure(f Failure) {
-	select {
-	case o.failures <- f:
-	default:
-		o.log.Warn("failure event dropped: client is not draining")
-	}
-}
-
-// Notifications is the stream of decisions the owner has already made. A client
-// renders them; it never re-judges (#192).
-func (o *Owner) Notifications() <-chan Notification { return o.notifications }
-
-// publishNotification drops rather than blocks: a client that stopped draining
-// must never stall the update loop, and a client that has stopped draining is
-// not drawing the toast anyway. It used to be worth saying that the desktop
-// notification carried the same value regardless; that sink can now be switched
-// off (#249), so the consolation is gone and the reason is the stall alone.
-func (o *Owner) publishNotification(n Notification) {
-	select {
-	case o.notifications <- n:
-	default:
-		o.log.Warn("notification dropped: client is not draining")
-	}
-}
+// publishNotification hands the decision the owner already made to every
+// client to draw as a toast; none of them re-judges it (#192). A client that
+// stopped draining is not drawing the toast anyway.
+func (o *Owner) publishNotification(n Notification) { o.broadcast(n, false) }
 
 // publishIncoming reports an inbound message in a chat no client is showing.
 // Outgoing messages and the focused chat are excluded: neither should flash a
@@ -162,9 +142,5 @@ func (o *Owner) publishIncoming(evt store.Event, focused func(domain.HistoryKey)
 	if focused(h) {
 		return
 	}
-	select {
-	case o.incoming <- Incoming{ChatID: h.ChatID, TopicID: h.TopicID}:
-	default:
-		o.log.Warn("incoming event dropped: client is not draining")
-	}
+	o.broadcast(Incoming{ChatID: h.ChatID, TopicID: h.TopicID}, false)
 }

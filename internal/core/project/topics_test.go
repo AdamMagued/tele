@@ -93,7 +93,7 @@ func TestRegistry_APinIsNotCarriedIntoAnotherTopic(t *testing.T) {
 		}},
 	}
 	g, _ := newRegistry(r)
-	id := g.Subscribe(project.HistoryWindow{ChatID: forum, TopicID: 12, Anchor: project.Anchor{Kind: project.AnchorFirstUnread}, Before: 5})
+	id := subscribe(g, project.HistoryWindow{ChatID: forum, TopicID: 12, Anchor: project.Anchor{Kind: project.AnchorFirstUnread}, Before: 5})
 
 	g.MoveWindow(id, project.HistoryWindow{ChatID: forum, TopicID: 30, Anchor: project.Anchor{Kind: project.AnchorFirstUnread}, Before: 5})
 
@@ -174,7 +174,7 @@ func TestDiffTopicList_ATopicMovingIsAReset(t *testing.T) {
 func TestRegistry_ATopicListSubscriptionFollowsTheTopics(t *testing.T) {
 	r := &fakeReader{chats: []domain.Chat{forumChat()}, topics: map[int64][]domain.Topic{forum: listedTopics()}}
 	g, rec := newRegistry(r)
-	id := g.Subscribe(project.TopicListWindow{ChatID: forum, Limit: 10})
+	id := subscribe(g, project.TopicListWindow{ChatID: forum, Limit: 10})
 
 	r.topics[forum][3].Title = "Operations"
 	g.Refresh()

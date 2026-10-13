@@ -300,12 +300,12 @@ func TestSetMuted_UnknownChatIsPeerNotFound(t *testing.T) {
 
 func TestSetMuted_PublishesADeltaToTheChatList(t *testing.T) {
 	o, _ := newCmdOwner(t, &stubClient{})
-	o.Subscribe(project.ChatListWindow{Limit: 10})
-	recvDelta(t, o.Deltas()) // the subscription's opening Reset
+	testClient(o).Subscribe(project.ChatListWindow{Limit: 10})
+	recvDelta(t, testClient(o)) // the subscription's opening Reset
 
 	require.NoError(t, o.SetMuted(context.Background(), domain.HistoryKey{ChatID: 1}, true))
 
-	d, ok := recvDelta(t, o.Deltas())
+	d, ok := recvDelta(t, testClient(o))
 	require.True(t, ok, "the mute must reach subscribed clients")
 	require.NotNil(t, d.ChatList)
 }

@@ -38,6 +38,9 @@ type testOwner struct {
 	// moves records the windows the client asked for, so a test can assert that
 	// scrolling repositions a window rather than fetching anything itself.
 	moves []project.Window
+	// lastSub is the last subscription id handed out: ids are the client's to
+	// choose and are never reused (#309).
+	lastSub project.SubID
 	// cmdErr is what every command answers with, standing in for a refusal.
 	cmdErr error
 	// knownUsers is what KnownUser answers from, fullUsers what GetUser
@@ -120,7 +123,11 @@ func (o *testOwner) enqueue(d project.Delta) bool {
 	return true
 }
 
-func (o *testOwner) Subscribe(w project.Window) project.SubID { return o.reg.Subscribe(w) }
+func (o *testOwner) Subscribe(w project.Window) project.SubID {
+	o.lastSub++
+	o.reg.Subscribe(o.lastSub, w)
+	return o.lastSub
+}
 
 func (o *testOwner) LogOutPreview() core.LogOutPreview { return core.LogOutPreview{} }
 

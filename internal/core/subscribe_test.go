@@ -24,6 +24,7 @@ import (
 type stubConn struct {
 	internaltg.Client
 	history []domain.Message
+	histErr error
 	calls   atomic.Int32
 	release chan struct{}
 
@@ -52,7 +53,7 @@ func (s *stubConn) GetHistory(_ context.Context, _ domain.Peer, _ int, _ int) ([
 	if s.release != nil {
 		<-s.release
 	}
-	return s.history, nil
+	return s.history, s.histErr
 }
 
 // GetHistoryAfter answers the way messages.getHistory with a negative
@@ -95,9 +96,9 @@ func TestOwner_SubscribeDeliversInitialContents(t *testing.T) {
 	_ = events
 	st.SetChat(domain.Chat{ID: 1, Title: "Ada"})
 
-	id := o.Subscribe(project.ChatListWindow{Limit: 10})
+	id := testClient(o).Subscribe(project.ChatListWindow{Limit: 10})
 
-	d, ok := recvDelta(t, o.Deltas())
+	d, ok := recvDelta(t, testClient(o))
 	require.True(t, ok)
 	assert.Equal(t, id, d.Sub)
 	require.NotNil(t, d.ChatList)
@@ -109,16 +110,16 @@ func TestOwner_SubscribeDeliversInitialContents(t *testing.T) {
 func TestOwner_UnsubscribedClientGetsNothing(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1})
-	id := o.Subscribe(project.ChatListWindow{Limit: 10})
-	_, _ = recvDelta(t, o.Deltas())
-	o.Unsubscribe(id)
+	id := testClient(o).Subscribe(project.ChatListWindow{Limit: 10})
+	_, _ = recvDelta(t, testClient(o))
+	testClient(o).Unsubscribe(id)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go o.RunUpdates(ctx)
 
 	events <- store.Event{Kind: store.EventMuteUpdate, ChatID: 1, Muted: true}
 
-	_, more := recvDelta(t, o.Deltas())
+	_, more := recvDelta(t, testClient(o))
 	assert.False(t, more, "an unsubscribed window must cost nothing")
 }
 
@@ -130,13 +131,13 @@ func TestOwner_SubscribingToAnUnfilledChatWindowBackfills(t *testing.T) {
 	o, s := newOwnerWithClient(t, c)
 	s.Store().SetChat(domain.Chat{ID: 7, Peer: domain.Peer{ID: 7}})
 
-	o.Subscribe(project.HistoryWindow{
+	testClient(o).Subscribe(project.HistoryWindow{
 		ChatID: 7, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 20,
 	})
 
 	// The initial delta is the empty window; the fetched history follows.
-	_, _ = recvDelta(t, o.Deltas())
-	d, ok := recvDelta(t, o.Deltas())
+	_, _ = recvDelta(t, testClient(o))
+	d, ok := recvDelta(t, testClient(o))
 	require.True(t, ok, "the client must not have to know the store was empty")
 	require.NotNil(t, d.History)
 	assert.Len(t, d.History.Contents.Messages, 2)
@@ -152,11 +153,11 @@ func TestOwner_FullWindowDoesNotBackfill(t *testing.T) {
 		{ID: 3, ChatID: 7, Date: time.Unix(3, 0)},
 	})
 
-	o.Subscribe(project.HistoryWindow{
+	testClient(o).Subscribe(project.HistoryWindow{
 		ChatID: 7, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 1,
 	})
 
-	_, _ = recvDelta(t, o.Deltas())
+	_, _ = recvDelta(t, testClient(o))
 	assert.Zero(t, c.calls.Load(), "the store already held everything the window asked for")
 }
 
@@ -167,10 +168,10 @@ func TestOwner_ConcurrentBackfillsCollapseToOneFetch(t *testing.T) {
 	o, s := newOwnerWithClient(t, c)
 	s.Store().SetChat(domain.Chat{ID: 7, Peer: domain.Peer{ID: 7}})
 	w := project.HistoryWindow{ChatID: 7, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 20}
-	id := o.Subscribe(w)
+	id := testClient(o).Subscribe(w)
 
 	for i := 0; i < 5; i++ {
-		o.MoveWindow(id, project.HistoryWindow{
+		testClient(o).MoveWindow(id, project.HistoryWindow{
 			ChatID: 7, Anchor: w.Anchor, Before: 20 + i,
 		})
 	}
@@ -199,7 +200,7 @@ func TestOwner_BackfillKeepsAMessageThatArrivedWhileItWasFetching(t *testing.T) 
 	s.Store().SetChat(domain.Chat{ID: 7, Peer: domain.Peer{ID: 7}})
 	s.Store().SetMessages(7, []domain.Message{{ID: 5, ChatID: 7, Date: time.Unix(5, 0)}})
 
-	o.Subscribe(project.HistoryWindow{
+	testClient(o).Subscribe(project.HistoryWindow{
 		ChatID: 7, Anchor: project.Anchor{Kind: project.AnchorNewest}, Before: 20,
 	})
 	require.Eventually(t, func() bool { return c.calls.Load() >= 1 }, time.Second, time.Millisecond,
@@ -222,20 +223,22 @@ func TestOwner_BackfillKeepsAMessageThatArrivedWhileItWasFetching(t *testing.T) 
 // subscription is resent on its own.
 func TestOwner_ADroppedDeltaIsResyncedWithoutAnotherChange(t *testing.T) {
 	o, _, st := newTestOwner(t)
-	o.deltas = make(chan project.Delta, 1)
+	c := o.Attach()
 	st.SetChat(domain.Chat{ID: 1, Title: "Ada"})
-	id := o.Subscribe(project.ChatListWindow{Limit: 10})
-	_, _ = recvDelta(t, o.Deltas())
+	id := c.Subscribe(project.ChatListWindow{Limit: 10})
+	_, _ = recvDelta(t, c)
 
 	// The client stops draining, and a change arrives that it cannot take.
-	o.deltas <- project.Delta{}
+	for len(c.stream) < cap(c.stream) {
+		c.stream <- struct{}{}
+	}
 	st.SetChat(domain.Chat{ID: 1, Title: "Grace"})
 	o.Refresh()
 
 	// The client drains again; nothing else changes.
-	<-o.deltas
+	queued(c)
 
-	d, ok := recvDelta(t, o.Deltas())
+	d, ok := recvDelta(t, c)
 	require.True(t, ok, "the lost delta must be repaired without waiting on another change")
 	assert.Equal(t, id, d.Sub)
 	require.NotNil(t, d.ChatList)
