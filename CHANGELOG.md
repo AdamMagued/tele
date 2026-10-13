@@ -11,6 +11,31 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+### Fixed
+
+- Long key bindings in the shortcuts overlay (`?`) are shown in full, such as
+  `ctrl+d/ctrl+u`. The key column was capped at 10 characters and cut the rest
+  off, and a binding with a multi-byte character could be cut in the middle of
+  it (#291).
+
+## [1.11.12] - 2026-10-12
+
+### Fixed
+
+- Stepping onto a message taller than the chat pane with `j` or `k` shows it
+  from its first line, at the top of the pane; the rest is read with `↓`.
+  `j` used to scroll past its first lines, and stepping off it could select
+  the next message while it was still below the pane. A message taller than
+  half the pane is shown whole when `k` steps onto it, instead of being cut
+  off at the bottom edge (#306, #305).
+- Selecting a folder, or opening a chat from search, a notification or a
+  profile, while a forum's topics fill the middle pane gives that pane back to
+  the chat list. The topics used to stay until `Esc`, with the folder's chats
+  loaded underneath them. What is open in the chat pane stays open (#307,
+  #300).
+
+## [1.11.11] - 2026-10-12
+
 ### Added
 
 - Log out, on `g L`. It asks first, naming the account and what goes with it -
@@ -23,6 +48,10 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
   directory, the proxy, the cache sizes, the image mode and the app key - keep
   the values it started with for whoever logs in next, whatever the config
   says by then (#239).
+- Quitting can ask first. With `ui.confirm_quit` on (off by default), `q`,
+  `ctrl+c` and `ctrl+q` open a confirmation: `y` or `enter` quits, `n`, `esc`
+  or `q` cancels, and a modifier quit binding pressed again quits without
+  asking.
 
 ### Changed
 
@@ -61,7 +90,6 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 - A file attached to a reply no longer sits flush against the reply preview
   in the composer, and the attachment line takes the theme's background
   instead of showing the terminal's through it (#295).
-- Shortcuts overlay key bindings column dynamic width sizing and cell measurement (#291, #302).
 
 ## [1.11.10] - 2026-10-04
 
