@@ -17,6 +17,10 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
   `ctrl+d/ctrl+u`. The key column was capped at 10 characters and cut the rest
   off, and a binding with a multi-byte character could be cut in the middle of
   it (#291).
+- The settings overlay (`,`) scrolls on past the last setting into the
+  keybindings, with the cursor stopping on each binding. `j` used to stop at
+  the last setting, and the keybindings could only be seen by moving the view
+  away from the cursor (#303).
 
 ## [1.11.12] - 2026-10-12
 
