@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 	"github.com/sorokin-vladimir/tele/internal/ui/theme"
@@ -159,8 +160,27 @@ func helpSections(km keys.KeyMap) []helpSection {
 	return out
 }
 
-// helpMargin is the terminal cells reserved around the modal on each axis.
-const helpMargin = 2
+const (
+	// helpMargin is the terminal cells reserved around the modal on each axis.
+	helpMargin = 2
+
+	// defaultMaxInnerWidth is the baseline upper bound on inner width for wide terminals.
+	defaultMaxInnerWidth = 56
+
+	// minInnerWidth is the minimum inner width before clamping only to terminal borders.
+	minInnerWidth = 20
+
+	// keyColExtraRoom is the additional modal width beyond keyCol: 4 cells of key padding
+	// (2 leading spaces + 2 separator spaces) plus 34 cells for a readable description column.
+	keyColExtraRoom = 38
+
+	// minDescRoomInline is the minimum remaining columns needed to render a description
+	// inline next to its key on the same row. Below this, descriptions wrap onto the next line.
+	minDescRoomInline = 8
+
+	// stackedDescIndent is the indentation in cells for descriptions placed below their key.
+	stackedDescIndent = 4
+)
 
 // The modal is an opaque overlay: it carries its own background so text stays
 // readable on both light and dark terminals (a transparent overlay left the
@@ -170,6 +190,7 @@ const helpMargin = 2
 // generated from the effective keymap. It owns scroll (j/k, arrows) and closes
 // on esc or '?'.
 type HelpModal struct {
+	km     keys.KeyMap
 	lines  []string // fully rendered body lines (styled)
 	width  int
 	height int
@@ -179,32 +200,68 @@ type HelpModal struct {
 
 // NewHelpModal builds the modal from km at the given terminal size.
 func NewHelpModal(km keys.KeyMap, width, height int) *HelpModal {
-	h := &HelpModal{width: width, height: height}
+	h := &HelpModal{km: km, width: width, height: height}
 	h.build(km)
 	return h
 }
 
 func (h *HelpModal) SetSize(w, height int) {
+	if h.width == w && h.height == height {
+		return
+	}
 	h.width = w
 	h.height = height
-	h.clampOffset()
+	if h.km != nil {
+		h.build(h.km)
+	} else {
+		h.clampOffset()
+	}
+}
+
+func (h *HelpModal) innerWidth() int {
+	innerW := h.width - 2*helpMargin - 2
+	maxInner := defaultMaxInnerWidth
+	if h.keyCol+keyColExtraRoom > maxInner {
+		maxInner = h.keyCol + keyColExtraRoom
+	}
+	if innerW > maxInner {
+		innerW = maxInner
+	}
+	if innerW < minInnerWidth {
+		innerW = minInnerWidth
+	}
+	if h.width > 2*helpMargin && innerW > h.width-2 {
+		innerW = h.width - 2
+	}
+	return innerW
+}
+
+func wrapHelpDesc(desc string, width int) []string {
+	if desc == "" {
+		return nil
+	}
+	if width <= 0 {
+		return []string{desc}
+	}
+	return strings.Split(xansi.Wrap(desc, width, ""), "\n")
 }
 
 func (h *HelpModal) build(km keys.KeyMap) {
 	secs := helpSections(km)
-	// Key column = widest key string, capped.
+	// Key column = widest key string, measured in display cells without arbitrary clamping.
 	keyCol := 3
 	for _, s := range secs {
 		for _, r := range s.Rows {
-			if len(r.Key) > keyCol {
-				keyCol = len(r.Key)
+			if w := xansi.StringWidth(r.Key); w > keyCol {
+				keyCol = w
 			}
 		}
 	}
-	if keyCol > 10 {
-		keyCol = 10
-	}
 	h.keyCol = keyCol
+
+	innerW := h.innerWidth()
+	prefixW := 2 + keyCol + 2
+	descRoom := innerW - prefixW
 
 	var lines []string
 	for i, s := range secs {
@@ -214,21 +271,59 @@ func (h *HelpModal) build(km keys.KeyMap) {
 		lines = append(lines, theme.S().HelpSection.Render(s.Title))
 		for _, r := range s.Rows {
 			key := r.Key
-			if len(key) > keyCol {
-				key = key[:keyCol]
+			keyW := xansi.StringWidth(key)
+			// canvas:ok key padding is styled through HelpBg below to carry the modal background
+			pad := strings.Repeat(" ", max(0, keyCol-keyW))
+
+			if descRoom >= minDescRoomInline {
+				prefix := theme.S().HelpBg.Render("  ") + theme.S().HelpKey.Render(key) +
+					theme.S().HelpBg.Render(pad+"  ")
+				descLines := wrapHelpDesc(r.Desc, descRoom)
+				if len(descLines) == 0 {
+					lines = append(lines, prefix)
+					continue
+				}
+				lines = append(lines, prefix+theme.S().HelpDesc.Render(descLines[0]))
+				// canvas:ok continuation indent is styled through HelpBg below
+				indent := strings.Repeat(" ", prefixW)
+				for _, dl := range descLines[1:] {
+					lines = append(lines, theme.S().HelpBg.Render(indent)+theme.S().HelpDesc.Render(dl))
+				}
+			} else {
+				lines = append(lines, theme.S().HelpBg.Render("  ")+theme.S().HelpKey.Render(key))
+				indentW := stackedDescIndent
+				if indentW > innerW-stackedDescIndent {
+					indentW = 2
+				}
+				room := innerW - indentW
+				if room < stackedDescIndent {
+					room = innerW
+					indentW = 0
+				}
+				descLines := wrapHelpDesc(r.Desc, room)
+				// canvas:ok wrapped description indent is styled through HelpBg below
+				indent := strings.Repeat(" ", indentW)
+				for _, dl := range descLines {
+					lines = append(lines, theme.S().HelpBg.Render(indent)+theme.S().HelpDesc.Render(dl))
+				}
 			}
-			// canvas:ok these spaces are rendered through HelpBg below, so they
-			// carry the modal surface rather than the canvas behind it.
-			pad := strings.Repeat(" ", keyCol-len(key))
-			// Every segment (including gaps) carries the modal background so the
-			// row fill stays solid across the reset sequences between runs.
-			line := theme.S().HelpBg.Render("  ") + theme.S().HelpKey.Render(key) +
-				theme.S().HelpBg.Render(pad+"  ") + theme.S().HelpDesc.Render(r.Desc)
-			lines = append(lines, line)
 		}
 	}
 	h.lines = lines
 	h.clampOffset()
+}
+
+// LinesForTest exposes the rendered body lines so tests can inspect them
+// without parsing the bordered box.
+func (h *HelpModal) LinesForTest() []string {
+	out := make([]string, len(h.lines))
+	copy(out, h.lines)
+	return out
+}
+
+// KeyColForTest returns the computed display cell width of the key column.
+func (h *HelpModal) KeyColForTest() int {
+	return h.keyCol
 }
 
 // viewportH is the number of body rows visible inside the box (terminal height
@@ -282,14 +377,7 @@ func (h *HelpModal) Update(msg tea.KeyPressMsg) (*HelpModal, bool) {
 
 func (h *HelpModal) View() string {
 	vh := h.viewportH()
-	// Inner width: terminal minus margins and borders, capped for readability.
-	innerW := h.width - 2*helpMargin - 2
-	if innerW > 56 {
-		innerW = 56
-	}
-	if innerW < 20 {
-		innerW = 20
-	}
+	innerW := h.innerWidth()
 
 	end := h.offset + vh
 	if end > len(h.lines) {

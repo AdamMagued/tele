@@ -11,6 +11,13 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+### Fixed
+
+- Long key bindings in the shortcuts overlay (`?`) are shown in full, such as
+  `ctrl+d/ctrl+u`. The key column was capped at 10 characters and cut the rest
+  off, and a binding with a multi-byte character could be cut in the middle of
+  it (#291).
+
 ## [1.11.12] - 2026-10-12
 
 ### Fixed
