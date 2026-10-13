@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,10 +16,10 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/store"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
-	"github.com/sorokin-vladimir/tele/internal/ui"
 )
 
 // loggedOutConnection connects only to learn the session was logged out
@@ -53,23 +52,22 @@ func (c *bannedConnection) Updates() <-chan store.Event { return c.updates }
 
 // testHost is a host over a fresh state directory whose first account is
 // logged out as soon as it connects, and whose next one stays connected.
-func testHost(t *testing.T) (*App, chan tea.Msg, string) {
+func testHost(t *testing.T) (*App, string) {
 	t.Helper()
 	return testHostWith(t, &loggedOutConnection{updates: make(chan store.Event)})
 }
 
 // testHostWith is testHost with first as the first account's connection.
-func testHostWith(t *testing.T, first core.Connection) (*App, chan tea.Msg, string) {
+func testHostWith(t *testing.T, first core.Connection) (*App, string) {
 	t.Helper()
 	h := newTestHost(t, first, appkey.Key{}, "ui:\n  history_limit: 30\n")
-	return h.app, h.delivered, h.app.startup.sessionFile
+	return h.app, h.app.startup.sessionFile
 }
 
 // testHostRig is a host over a real config file and a fresh state directory,
 // with what its accounts were handed.
 type testHostRig struct {
-	app       *App
-	delivered chan tea.Msg
+	app *App
 	// endpoints receives what each account's connection was made with.
 	endpoints chan internaltg.Endpoint
 	// path is the config file, and stateDir the platform state directory.
@@ -92,8 +90,7 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 	start, err := newStartup(cfg, key)
 	require.NoError(t, err)
 
-	h := testHostRig{delivered: make(chan tea.Msg, 64), endpoints: make(chan internaltg.Endpoint, 8),
-		path: path, stateDir: stateDir}
+	h := testHostRig{endpoints: make(chan internaltg.Endpoint, 8), path: path, stateDir: stateDir}
 	var mu sync.Mutex
 	opened := 0
 	h.app = &App{
@@ -102,7 +99,7 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 		log:      zap.NewNop(),
 		notifier: newNotifier(zap.NewNop()),
 		tmpDir:   t.TempDir(),
-		deliver:  func(msg tea.Msg) { h.delivered <- msg },
+		client:   core.NewAttachment(),
 		connect: func(endpoint internaltg.Endpoint, _ updates.StateStorage) core.Connection {
 			h.endpoints <- endpoint
 			mu.Lock()
@@ -114,60 +111,82 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 			return &heldConnection{updates: make(chan store.Event)}
 		},
 	}
-	_, _, err = h.app.openNext()
+	_, err = h.app.openNext()
 	require.NoError(t, err)
 	// Runs before the temp directories are removed: an account's database
 	// still open then cannot be removed on Windows.
 	t.Cleanup(func() {
+		h.app.client.Detach()
 		h.app.switching.Lock()
 		defer h.app.switching.Unlock()
-		last, _ := h.app.current()
-		last.stop()
+		h.app.current().stop()
 	})
 	return h
 }
 
-func waitForEnd(t *testing.T, delivered chan tea.Msg) ui.AccountEndedMsg {
+// waitForEnd waits for the client to hear that an account ended, and then for
+// the next one to be open in its place.
+func waitForEnd(t *testing.T, a *App, ended *account) core.AccountEnded {
 	t.Helper()
 	deadline := time.After(3 * time.Second)
-	for {
+	var news core.AccountEnded
+	for heard := false; !heard; {
 		select {
-		case msg := <-delivered:
-			if ended, ok := msg.(ui.AccountEndedMsg); ok {
-				return ended
-			}
+		case msg := <-a.client.Stream():
+			news, heard = msg.(core.AccountEnded)
 		case <-deadline:
-			require.Fail(t, "the account never ended")
-			return ui.AccountEndedMsg{}
+			require.FailNow(t, "the account never ended")
 		}
 	}
+	require.Eventually(t, func() bool { return a.current() != ended }, 3*time.Second, 5*time.Millisecond,
+		"the next account never opened")
+	return news
 }
 
 // A log out ends the account in the running process: the next account starts
 // in its place, with nothing of the last one on disk - not its history, not its
-// session - and the client is handed the next one's model with the reason
-// (#297).
+// session - and the client hears why (#297).
 func TestHost_ALogOutStartsTheNextAccountWithNothingOfTheLast(t *testing.T) {
-	a, delivered, sessionFile := testHost(t)
-	first, epoch := a.current()
+	a, sessionFile := testHost(t)
+	first := a.current()
 	_, err := first.store.DB().Exec(`INSERT OR REPLACE INTO metadata (key, value) VALUES ('mark', 'first')`)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first, epoch)
-	ended := waitForEnd(t, delivered)
+	a.launch(ctx, first)
+	ended := waitForEnd(t, a, first)
 
-	assert.Equal(t, epoch+1, ended.Epoch)
-	assert.Equal(t, core.AccountEnded{Reason: core.EndLoggedOutElsewhere}, ended.Ended)
+	assert.Equal(t, core.AccountEnded{Reason: core.EndLoggedOutElsewhere}, ended)
 	assert.NoFileExists(t, sessionFile, "a login would bind to the old key")
 
-	next, nextEpoch := a.current()
-	assert.NotSame(t, first, next)
-	assert.Equal(t, ended.Epoch, nextEpoch)
+	next := a.current()
 	var v string
 	err = next.store.DB().QueryRow(`SELECT value FROM metadata WHERE key = 'mark'`).Scan(&v)
 	assert.Error(t, err, "the next account found the last one's data")
+}
+
+// The client stays attached across the end of an account: the same attachment
+// is seated at the next owner, and what the client asks reaches that one
+// (#309).
+func TestHost_TheClientIsSeatedAtTheNextAccount(t *testing.T) {
+	a, _ := testHost(t)
+	first := a.current()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.launch(ctx, first)
+	waitForEnd(t, a, first)
+
+	a.client.Subscribe(project.AccountWindow{})
+
+	select {
+	case msg := <-a.client.Stream():
+		d, ok := msg.(project.Delta)
+		require.True(t, ok, "the next owner answers the subscription, got %T", msg)
+		require.NotNil(t, d.Account)
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "the next owner never answered")
+	}
 }
 
 // A banned account's connection is over before the person decides anything.
@@ -175,18 +194,38 @@ func TestHost_ALogOutStartsTheNextAccountWithNothingOfTheLast(t *testing.T) {
 // the account like any log out; what the banned one ended with is no longer
 // the process's exit error (#297).
 func TestHost_LeavingABannedAccountStartsTheNextOne(t *testing.T) {
-	a, delivered, _ := testHostWith(t, &bannedConnection{updates: make(chan store.Event)})
-	first, epoch := a.current()
+	a, _ := testHostWith(t, &bannedConnection{updates: make(chan store.Event)})
+	first := a.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first, epoch)
+	go a.listen(ctx)
+	a.launch(ctx, first)
 	require.Eventually(t, func() bool { return a.lastExitErr() != nil }, 2*time.Second, 5*time.Millisecond)
 
-	first.owner.EndAccount(core.EndBanned)
-	ended := waitForEnd(t, delivered)
+	a.client.EndAccount(core.EndBanned)
+	ended := waitForEnd(t, a, first)
 
-	assert.Equal(t, core.EndBanned, ended.Ended.Reason)
+	assert.Equal(t, core.EndBanned, ended.Reason)
 	assert.NoError(t, a.lastExitErr())
+}
+
+// Only the account running now can end. Asked twice - the connection and the
+// client both, or a request arriving late - the second must not take the next
+// account with it.
+func TestHost_AnAccountEndsOnce(t *testing.T) {
+	a, _ := testHost(t)
+	first := a.current()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.launch(ctx, first)
+	waitForEnd(t, a, first)
+	next := a.current()
+
+	a.endAccount(ctx, first, core.EndBanned)
+
+	assert.Same(t, next, a.current(), "the next account is still the one running")
+	_, err := next.store.DB().Exec(`SELECT 1`)
+	assert.NoError(t, err, "and it was not stopped")
 }
 
 // The app key a build carries is the process's, not the file's: an account
@@ -200,11 +239,11 @@ func TestHost_TheNextAccountConnectsWithTheBuiltInKeyAfterAReload(t *testing.T) 
 	_, err := a.reloadConfig()
 	require.NoError(t, err)
 
-	first, epoch := a.current()
+	first := a.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first, epoch)
-	waitForEnd(t, h.delivered)
+	a.launch(ctx, first)
+	waitForEnd(t, a, first)
 
 	select {
 	case endpoint := <-h.endpoints:
@@ -212,14 +251,4 @@ func TestHost_TheNextAccountConnectsWithTheBuiltInKeyAfterAReload(t *testing.T) 
 	case <-time.After(3 * time.Second):
 		require.Fail(t, "the next account never connected")
 	}
-}
-
-// Whatever the ended account's bridges still had to say is marked with its
-// epoch, so the next account's model drops it.
-func TestHost_WhatAnAccountSendsIsMarkedWithItsEpoch(t *testing.T) {
-	a, delivered, _ := testHost(t)
-
-	a.send(7, ui.ConnectFailedMsg{})
-
-	assert.Equal(t, ui.Stamped(7, ui.ConnectFailedMsg{}), <-delivered)
 }

@@ -14,7 +14,7 @@ import (
 func TestConnectFailed_AfterLoginToastDoesNotExpire(t *testing.T) {
 	m := mainScreenModel()
 
-	next, cmd := m.handleConnectFailed(ConnectFailedMsg{Err: &telerr.Error{Kind: telerr.Network}})
+	next, cmd := m.handleConnectFailed(&telerr.Error{Kind: telerr.Network})
 
 	assert.False(t, next.toasts.Empty())
 	assert.Nil(t, cmd, "no clear may be scheduled for this toast")

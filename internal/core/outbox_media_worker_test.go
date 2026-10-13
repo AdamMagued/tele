@@ -142,7 +142,7 @@ func TestWorker_PublishesAggregateProgressAcrossTheGroup(t *testing.T) {
 	c := &stubClient{}
 	o, _ := newCmdOwner(t, c)
 	o.SetOutbox(newOutboxStore(t))
-	cl := o.Attach()
+	cl := attach(o)
 	ctx := runWorker(t, o)
 
 	require.NoError(t, o.SendMedia(ctx, MediaSendRequest{

@@ -47,7 +47,7 @@ type Owner struct {
 	// its own stream. Nothing the owner says is shared between them on the way
 	// out (#309).
 	clientsMu sync.Mutex
-	clients   map[clientID]*Attachment
+	clients   map[clientID]*seat
 	// acct is where the account stands: the login step, the connection, the
 	// clock (#309).
 	acct     accountState
@@ -56,8 +56,6 @@ type Owner struct {
 	// selfName is the logged-in user's username, once known: a log out names
 	// whose account it ends (#297).
 	selfName atomic.Pointer[string]
-	// endRequests carries a client's request that the account end (#297).
-	endRequests chan EndReason
 
 	// ctx bounds the owner's background work (history backfill). It is stored
 	// rather than passed because that work is started by a subscription, which
@@ -123,9 +121,8 @@ func New(cfg *config.Config, log *zap.Logger, st *state.State, client Connection
 		client:        client,
 		notifier:      n,
 		authFlow:      internaltg.NewAuthFlow(),
-		clients:       make(map[clientID]*Attachment),
+		clients:       make(map[clientID]*seat),
 		readyCh:       make(chan struct{}),
-		endRequests:   make(chan EndReason, 1),
 		fetching:      make(map[subKey]bool),
 		repairing:     make(map[int64]bool),
 		focus:         newFocusRegistry(),

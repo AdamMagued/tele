@@ -147,7 +147,7 @@ func TestLogOut_TelegramOutOfReachAsksAgain(t *testing.T) {
 func TestBanned_EnterLeavesForAnotherNumber(t *testing.T) {
 	o := newOwnerStub(store.NewMemory())
 	m := nextAccountRoot().WithOwner(o)
-	m, _ = m.handleConnectFailed(ConnectFailedMsg{Err: &telerr.Error{Kind: telerr.AccountBanned}})
+	m, _ = m.handleConnectFailed(&telerr.Error{Kind: telerr.AccountBanned})
 	require.Contains(t, screenText(m), "Press Enter to log in with another number.")
 
 	m, cmd, handled := m.handleBannedKey(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -165,7 +165,7 @@ func TestBanned_EnterLeavesForAnotherNumber(t *testing.T) {
 func TestBanned_EnterDoesNothingElsewhere(t *testing.T) {
 	o := newOwnerStub(store.NewMemory())
 	m := nextAccountRoot().WithOwner(o)
-	m, _ = m.handleConnectFailed(ConnectFailedMsg{Err: &telerr.Error{Kind: telerr.Network}})
+	m, _ = m.handleConnectFailed(&telerr.Error{Kind: telerr.Network})
 
 	_, _, handled := m.handleBannedKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 

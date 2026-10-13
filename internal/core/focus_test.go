@@ -112,7 +112,7 @@ func TestFocusRegistry_ConcurrentSetAndFocused(t *testing.T) {
 
 func TestAttachment_ReportsAndReleasesFocus(t *testing.T) {
 	o, _, _ := newTestOwner(t)
-	a := o.Attach()
+	a := attach(o)
 
 	a.SetFocus(domain.HistoryKey{ChatID: 7})
 	assert.True(t, o.focus.focused(7))
@@ -127,7 +127,7 @@ func TestAttachment_ReportsAndReleasesFocus(t *testing.T) {
 
 func TestAttachment_TwoClientsAreIndependent(t *testing.T) {
 	o, _, _ := newTestOwner(t)
-	a, b := o.Attach(), o.Attach()
+	a, b := attach(o), attach(o)
 	a.SetFocus(domain.HistoryKey{ChatID: 7})
 	b.SetFocus(domain.HistoryKey{ChatID: 9})
 

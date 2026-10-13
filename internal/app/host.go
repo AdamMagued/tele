@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	tea "charm.land/bubbletea/v2"
 	"go.uber.org/zap"
 
 	"github.com/sorokin-vladimir/tele/internal/accountstate"
@@ -18,31 +17,35 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
 
-// The host's side of an account's life (#297). The host opens an account,
-// builds the model that draws it and runs both; when the account ends with a
-// log out, the host stops it whole, removes it from disk, opens the next one
-// and hands the client that one's model. Nothing of an account lives in the
-// host, which is what lets the next one start with nothing of the last.
+// The host's side of an account's life (#297). The host opens an account and
+// runs it, and seats the client's attachment at its owner; when the account
+// ends with a log out, the host tells the client, stops the account whole,
+// removes it from disk, opens the next one and seats the client there. Nothing
+// of an account lives in the host, which is what lets the next one start with
+// nothing of the last. The client outlives the accounts as the host does, and
+// draws each one itself (#309).
 
-// current is the account running now and the epoch it has on screen.
-func (a *App) current() (*account, uint64) {
+// current is the account running now.
+func (a *App) current() *account {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.acct, a.epoch
+	return a.acct
 }
 
-// openNext opens the next account over the state directory and makes it the
-// current one, with the next epoch. Its scratch files live in a directory of
-// its own, so they go with it rather than pass to whoever logs in next.
-func (a *App) openNext() (*account, uint64, error) {
+// openNext opens the next account over the state directory, makes it the
+// current one and seats the client at its owner. Its scratch files live in a
+// directory of its own, so they go with it rather than pass to whoever logs in
+// next.
+func (a *App) openNext() (*account, error) {
 	a.mu.Lock()
-	epoch := a.epoch + 1
+	a.opened++
+	n := a.opened
 	a.mu.Unlock()
 
 	cfg := a.cfg()
 	tmpDir := ""
 	if a.tmpDir != "" {
-		tmpDir = filepath.Join(a.tmpDir, "account-"+strconv.FormatUint(epoch, 10))
+		tmpDir = filepath.Join(a.tmpDir, "account-"+strconv.FormatUint(n, 10))
 		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 			a.log.Warn("no scratch directory for the account", zap.Error(err))
 			tmpDir = ""
@@ -66,30 +69,27 @@ func (a *App) openNext() (*account, uint64, error) {
 		},
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	// The client attaches: the subscriptions and the focus it reports belong
-	// to it, everything else is the owner's (#192, #309). It ends with the
-	// owner.
-	acct.client = acct.owner.Attach()
-
 	a.mu.Lock()
-	a.acct, a.epoch = acct, epoch
+	a.acct = acct
 	a.mu.Unlock()
-	return acct, epoch, nil
+	a.client.Join(acct.owner)
+	return acct, nil
 }
 
-// buildRoot builds the model that draws acct. The person's things - config,
-// key map, log path - are the host's and shared; everything the model reaches
-// the account through is this account's. The one-time startup notices belong
-// to the start of the process, so only the first account's model has them.
-func (a *App) buildRoot(acct *account, first bool) ui.RootModel {
+// buildRoot builds a model for the client to draw whichever account it is
+// attached to. The person's things - config, key map, log path - are shared;
+// what the model saves to show the person goes in a scratch directory of its
+// own, which the next model's replaces. The one-time startup notices belong to
+// the start of the process, so only the first model has them.
+func (a *App) buildRoot(ctx context.Context, first bool) ui.RootModel {
 	cfg := a.cfg()
 	root := ui.NewRootModel(a.verbose)
-	root = root.WithContext(acct.ctx).WithImageMode(acct.startup.imageMode).WithConfig(cfg).WithKeyMap(a.keyMap).WithOwner(acct.client).
+	root = root.WithContext(ctx).WithImageMode(a.startup.imageMode).WithConfig(cfg).WithKeyMap(a.keyMap).WithOwner(a.client).
 		WithLogger(a.log).WithConfigReload(a.reloadConfig).WithSettingsStore(a.cfgStore).WithLogPath(a.logPath)
 	root.SetLoginModel(screens.NewLoginModel())
-	root.SetTmpDir(acct.tmpDir)
+	root.SetTmpDir(a.nextScreenDir())
 	if first {
 		// Seen-state is written on dismissal, so quitting before the countdown
 		// ends shows the notice again next time (#197).
@@ -99,6 +99,26 @@ func (a *App) buildRoot(acct *account, first bool) ui.RootModel {
 		root = root.WithThemeWarnings(a.themeWarnings)
 	}
 	return root
+}
+
+// nextScreenDir makes the scratch directory of the next model and removes the
+// last one's: documents opened and photos saved for an account that ended are
+// that account's, and must not outlive it on disk.
+func (a *App) nextScreenDir() string {
+	if a.tmpDir == "" {
+		return ""
+	}
+	if a.screenDir != "" {
+		_ = os.RemoveAll(a.screenDir)
+	}
+	a.screens++
+	dir := filepath.Join(a.tmpDir, "screen-"+strconv.FormatUint(a.screens, 10))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		a.log.Warn("no scratch directory for the screen", zap.Error(err))
+		dir = ""
+	}
+	a.screenDir = dir
+	return dir
 }
 
 // openNoticeSeen opens the machine's record of the notices already shown. An
@@ -117,31 +137,38 @@ func (a *App) openNoticeSeen(acct *account) notices.Seen {
 	return seen
 }
 
-// send delivers msg to the model of epoch, and to no other: a late message
-// from an account that ended is dropped on arrival.
-func (a *App) send(epoch uint64, msg tea.Msg) {
-	a.deliver(ui.Stamped(epoch, msg))
-}
-
-// launch runs acct with the work the host does for it: the bridge to its model,
-// and listening for the client to ask for the account to end.
-func (a *App) launch(ctx context.Context, acct *account, epoch uint64) {
-	acct.run(ctx, a.connectionEnded(ctx, acct, epoch),
-		a.deltaBridge(acct, epoch), a.endRequests(ctx, acct, epoch))
-}
-
-// endRequests ends acct when its client asks: for an end the connection did not
-// bring about itself, such as leaving a banned account (#297).
-func (a *App) endRequests(hostCtx context.Context, acct *account, epoch uint64) func(context.Context) {
-	return func(ctx context.Context) {
+// bridge carries the client's stream to its model for the life of the
+// process: deltas and events from whichever owner it is seated at, and what
+// the host tells it. The stream is one and ordered, so whatever arrives after
+// the news that an account ended belongs to the next one.
+func (a *App) bridge(ctx context.Context) {
+	for {
 		select {
 		case <-ctx.Done():
-		case reason := <-acct.owner.EndRequests():
-			// On a goroutine of its own: ending the account waits for this
-			// work, which is the account's.
-			go a.endAccount(hostCtx, acct, epoch, reason)
+			return
+		case msg := <-a.client.Stream():
+			a.prog.Send(msg)
 		}
 	}
+}
+
+// listen ends the current account when the client asks: for an end the
+// connection did not bring about itself, such as leaving a banned account
+// (#297).
+func (a *App) listen(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case reason := <-a.client.EndRequests():
+			go a.endAccount(ctx, a.current(), reason)
+		}
+	}
+}
+
+// launch runs acct, listening for what its connection ends with.
+func (a *App) launch(ctx context.Context, acct *account) {
+	acct.run(ctx, a.connectionEnded(ctx, acct))
 }
 
 // connectionEnded is told what acct's connection ended with. A log out ends the
@@ -149,13 +176,13 @@ func (a *App) endRequests(hostCtx context.Context, acct *account, epoch uint64) 
 // the account shows it to its clients while the program still runs, since
 // waiting for the exit to report it meant nobody saw it, on a screen nobody
 // could quit (#283, #309).
-func (a *App) connectionEnded(ctx context.Context, acct *account, epoch uint64) func(error) {
+func (a *App) connectionEnded(ctx context.Context, acct *account) func(error) {
 	return func(err error) {
 		if ctx.Err() == nil {
 			if reason, ok := core.EndReasonOf(err); ok {
 				// On a goroutine of its own: ending the account waits for this
 				// one, which is still the connection's.
-				go a.endAccount(ctx, acct, epoch, reason)
+				go a.endAccount(ctx, acct, reason)
 				return
 			}
 		}
@@ -171,23 +198,33 @@ func (a *App) lastExitErr() error {
 	return a.exitErr
 }
 
-// endAccount ends acct for reason and starts the next account in its place:
-// it stops acct whole, removes it from disk with its session, opens the next
-// one and puts that one's login on screen with the reason it is there (#297,
-// ADR 0023 in the notes). If the removal fails, the next account is not
-// opened: starting over the last one's files is what this exists to prevent.
-func (a *App) endAccount(ctx context.Context, acct *account, epoch uint64, reason core.EndReason) {
+// endAccount ends acct for reason and starts the next account in its place.
+// The client hears it first, before anything is closed: its calls in flight
+// are answered as ended rather than failing on whatever the stop closes under
+// them. Then the account is stopped whole, removed from disk with its session,
+// and the next one is opened and the client seated there (#297, #309). If the
+// removal fails, the next account is not opened: starting over the last one's
+// files is what this exists to prevent.
+//
+// Only the account running now can end: a second request for one that has
+// already ended - the connection and the client both asking - would otherwise
+// remove the next account's files.
+func (a *App) endAccount(ctx context.Context, acct *account, reason core.EndReason) {
 	a.switching.Lock()
 	defer a.switching.Unlock()
 	if ctx.Err() != nil {
 		return // the process is ending; its exit stops the account
 	}
+	if a.current() != acct {
+		return
+	}
 	discarded := acct.owner.UnsentCount()
+	a.client.Leave(core.AccountEnded{Reason: reason, Discarded: discarded})
 	acct.stop()
 
 	if err := accountstate.End(acct.startup.stateDir, acct.startup.sessionFile); err != nil {
 		a.log.Error("the account that ended could not be removed", zap.Error(err))
-		a.send(epoch, ui.ConnectFailedMsg{Err: fmt.Errorf("the account that ended could not be removed: %w", err)})
+		a.client.Tell(core.HostFailure{Err: fmt.Errorf("the account that ended could not be removed: %w", err)})
 		return
 	}
 	if acct.tmpDir != "" {
@@ -200,31 +237,11 @@ func (a *App) endAccount(ctx context.Context, acct *account, epoch uint64, reaso
 	a.exitErr = nil
 	a.mu.Unlock()
 
-	next, nextEpoch, err := a.openNext()
+	next, err := a.openNext()
 	if err != nil {
 		a.log.Error("the next account could not be opened", zap.Error(err))
-		a.send(epoch, ui.ConnectFailedMsg{Err: err})
+		a.client.Tell(core.HostFailure{Err: err})
 		return
 	}
-	a.deliver(ui.AccountEndedMsg{
-		Epoch: nextEpoch,
-		Root:  a.buildRoot(next, false),
-		Ended: core.AccountEnded{Reason: reason, Discarded: discarded},
-	})
-	a.launch(ctx, next, nextEpoch)
-}
-
-// deltaBridge carries what is addressed to acct's client to its model: the
-// client's one stream, deltas and events alike.
-func (a *App) deltaBridge(acct *account, epoch uint64) func(context.Context) {
-	return func(ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg := <-acct.client.Stream():
-				a.send(epoch, msg)
-			}
-		}
-	}
+	a.launch(ctx, next)
 }

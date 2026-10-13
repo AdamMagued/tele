@@ -103,6 +103,10 @@ type Owner interface {
 	InvalidateAvatar(userID, avatarID int64)
 }
 
+// The client's attachment is the owner the model holds; asserted here so the
+// two interfaces cannot drift apart unnoticed (#309).
+var _ Owner = (*core.Attachment)(nil)
+
 // refreshProjections is gone: every mutation the client makes now goes through
 // an owner command, whose commit rebuilds the projections and pushes a delta.
 // Nothing has to remember to repaint (#198).

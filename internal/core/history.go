@@ -18,7 +18,7 @@ import (
 // come.
 //
 // One fetch per subscription is in flight at a time (issue #120).
-func (o *Owner) fill(ctx context.Context, a *Attachment, id project.SubID, w project.HistoryWindow) {
+func (o *Owner) fill(ctx context.Context, a *seat, id project.SubID, w project.HistoryWindow) {
 	key := subKey{client: a.id, sub: id}
 	if !o.beginFetch(key) {
 		return
@@ -37,7 +37,7 @@ func (o *Owner) fill(ctx context.Context, a *Attachment, id project.SubID, w pro
 // could not fill and applies it to state; the registry then emits the resulting
 // delta through the same path as any other change. Caller holds the fetch guard.
 // A failure is told to a, the client whose window it was: nobody else asked.
-func (o *Owner) backfill(ctx context.Context, a *Attachment, w project.HistoryWindow) {
+func (o *Owner) backfill(ctx context.Context, a *seat, w project.HistoryWindow) {
 	chat, ok := o.state.Store().GetChat(w.ChatID)
 	if !ok {
 		return

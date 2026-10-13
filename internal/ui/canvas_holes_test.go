@@ -345,7 +345,7 @@ func TestCanvas_LoginStatesHaveNoHoles(t *testing.T) {
 	states := map[string]tea.Msg{
 		"still connecting": screens.SlowConnectMsg{},
 		"clock skew":       accountIs(ui.NewRootModel(false), project.AccountContents{ClockSkew: 8 * time.Minute}),
-		"error": ui.ConnectFailedMsg{Err: &telerr.Error{
+		"error": core.HostFailure{Err: &telerr.Error{
 			Kind: telerr.Network, Op: "dial", Detail: "connection refused",
 		}},
 	}

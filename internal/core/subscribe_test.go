@@ -223,7 +223,7 @@ func TestOwner_BackfillKeepsAMessageThatArrivedWhileItWasFetching(t *testing.T) 
 // subscription is resent on its own.
 func TestOwner_ADroppedDeltaIsResyncedWithoutAnotherChange(t *testing.T) {
 	o, _, st := newTestOwner(t)
-	c := o.Attach()
+	c := attach(o)
 	st.SetChat(domain.Chat{ID: 1, Title: "Ada"})
 	id := c.Subscribe(project.ChatListWindow{Limit: 10})
 	_, _ = recvDelta(t, c)

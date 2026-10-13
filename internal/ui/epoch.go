@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// An epoch is one account's turn on screen. When an account ends, the model
+// An epoch is one model's turn on screen. When an account ends, the model
 // drawing it is replaced by a new one with the next epoch, while commands the
 // old model started may still be running: a history page, a profile, a media
 // path from the account that ended. Every command the root model returns is
@@ -15,16 +15,14 @@ import (
 //
 // Stamping happens in one place, on the way out of the root model, because
 // every command passes through it: there is no other model the program runs.
+// What arrives on the client's stream is not stamped: the host orders it, so
+// whatever follows the news that an account ended is the next one's (#309).
 
 // epochMsg is a message produced for the model of one epoch.
 type epochMsg struct {
 	epoch uint64
 	msg   tea.Msg
 }
-
-// Stamped marks a message the host sends on behalf of one account, the way a
-// command's message is marked, so a late one from an ended account is dropped.
-func Stamped(epoch uint64, msg tea.Msg) tea.Msg { return epochMsg{epoch: epoch, msg: msg} }
 
 // teaPackage is where bubbletea's own messages come from.
 var teaPackage = reflect.TypeOf(tea.QuitMsg{}).PkgPath()

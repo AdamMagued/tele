@@ -53,7 +53,7 @@ func loginOwner(t *testing.T, c Connection) (*Owner, *Attachment) {
 		o.Stop()
 	})
 	o.spawn(func() { o.runLogin(ctx) })
-	a := o.Attach()
+	a := attach(o)
 	a.Subscribe(project.AccountWindow{})
 	first, ok := recvAccount(t, a)
 	require.True(t, ok)
@@ -93,7 +93,7 @@ func TestLogin_AClientAttachingMidLoginSeesTheStep(t *testing.T) {
 	_, ok := recvAccount(t, a)
 	require.True(t, ok)
 
-	late := o.Attach()
+	late := attach(o)
 	late.Subscribe(project.AccountWindow{})
 
 	got, ok := recvAccount(t, late)
@@ -150,7 +150,7 @@ func TestLogin_AFailureThatEndsTheLoginIsShown(t *testing.T) {
 func TestLogin_LoggedInLoadsTheAccount(t *testing.T) {
 	c := loginConn{folders: []domain.FolderFilter{{ID: 2, Title: "Work"}}}
 	o, a := loginOwner(t, c)
-	list := o.Attach()
+	list := attach(o)
 	list.Subscribe(project.ChatListWindow{Limit: 10})
 
 	close(o.readyCh)

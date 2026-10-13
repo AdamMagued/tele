@@ -6,16 +6,6 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/core"
 )
 
-// AccountEndedMsg is the host telling the client that the account on screen
-// has ended and its files are gone. It brings the model for the next account,
-// built by the host, and the epoch that model draws (#297). It is never
-// stamped: it is what changes the epoch.
-type AccountEndedMsg struct {
-	Epoch uint64
-	Root  RootModel
-	Ended core.AccountEnded
-}
-
 // loginNotice is what the next login says about the account that ended: why
 // the person is back here, and what was lost that they cannot get back from
 // Telegram. The login box does not wrap, so lines are kept short.

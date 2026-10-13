@@ -47,7 +47,7 @@ func TestOwner_ChannelGapRepairsTheFocusedChatAtOnce(t *testing.T) {
 	o, s := newOwnerWithClient(t, c)
 	s.Store().SetChat(domain.Chat{ID: 7, Peer: domain.Peer{ID: 7}, TopMessageID: 9})
 	s.Store().SetMessages(7, gapMsgs(1, 5))
-	a := o.Attach()
+	a := attach(o)
 	defer a.Detach()
 	a.SetFocus(domain.HistoryKey{ChatID: 7})
 

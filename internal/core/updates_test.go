@@ -151,7 +151,7 @@ func TestNotify_OneEventFeedsBothSinks(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hello there", Date: time.Now()}})
@@ -173,7 +173,7 @@ func TestNotify_SecondCopyOfAMessageIsSilent(t *testing.T) {
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
 	evt := store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ID: 40, ChatID: 2, Text: "hello there", Date: time.Now()}}
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(evt)
 	o.handleEvent(evt)
@@ -190,7 +190,7 @@ func TestNotify_MutedChatStillFlashesTheRow(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob", IsMuted: true})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hey", Date: time.Now()}})
@@ -211,7 +211,7 @@ func TestNotify_DesktopSinkOffLeavesTheToast(t *testing.T) {
 	o, st := newTestOwnerNotified(t, n)
 	o.SetConfig(notifyConfig(false, true))
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hello there", Date: time.Now()}})
@@ -227,7 +227,7 @@ func TestNotify_ToastSinkOffLeavesTheDesktopNotification(t *testing.T) {
 	o, st := newTestOwnerNotified(t, n)
 	o.SetConfig(notifyConfig(true, false))
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hello there", Date: time.Now()}})
@@ -244,7 +244,7 @@ func TestNotify_BothSinksOffStillFlashesTheRow(t *testing.T) {
 	o, st := newTestOwnerNotified(t, n)
 	o.SetConfig(notifyConfig(false, false))
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ChatID: 2, Text: "hey", Date: time.Now()}})
@@ -261,7 +261,7 @@ func TestNotify_FocusedChatDoesNeither(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 	c.SetFocus(domain.HistoryKey{ChatID: 2})
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
@@ -280,7 +280,7 @@ func TestNotify_GroupReactionFeedsBothSinks(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{
 		Kind: store.EventReactionsUpdate, ChatID: 2, MsgID: 10,
@@ -307,7 +307,7 @@ func TestNotify_DMReactionFeedsBothSinks(t *testing.T) {
 	n := &mockNotifier{}
 	o, st := newTestOwnerNotified(t, n)
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{
 		Kind: store.EventEditMessage,

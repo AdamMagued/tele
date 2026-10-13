@@ -70,6 +70,11 @@ func errText(action string, err error) (string, components.Severity, bool) {
 		// entry, so the toast that announces it and the reminder that outlives
 		// it do not describe one failure two ways (#224).
 		return action + ": " + components.RejectionReason(e.Reason), components.SeverityWarning, true
+	case telerr.AccountEnded:
+		// Nothing to say: the account it was meant for has ended, and the
+		// screen that asked is being replaced by the next login, which says
+		// why (#309).
+		return "", 0, false
 	default:
 		// Internal keeps the raw Telegram type: "internal error" on its own is
 		// useless to someone about to file an issue, and an error type is not

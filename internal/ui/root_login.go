@@ -109,8 +109,8 @@ func (m RootModel) loginFooterLines() []string {
 // already on screen are still worth reading, and one that stays until it is
 // dismissed: the connection will not come back by waiting, so a toast that timed
 // out would leave a dead app with nothing on screen saying so.
-func (m RootModel) handleConnectFailed(msg ConnectFailedMsg) (RootModel, tea.Cmd) {
-	text, sev, ok := errText(connectFailedAction, msg.Err)
+func (m RootModel) handleConnectFailed(err error) (RootModel, tea.Cmd) {
+	text, sev, ok := errText(connectFailedAction, err)
 	if !ok {
 		return m, nil
 	}
@@ -121,7 +121,7 @@ func (m RootModel) handleConnectFailed(msg ConnectFailedMsg) (RootModel, tea.Cmd
 	// A ban is no failure to connect: Telegram answered, and the answer is
 	// that logging in cannot help (#254). Where it came from says whose ban
 	// it is - the account's before any step, the number's once one was given.
-	if telerr.Of(msg.Err) == telerr.AccountBanned {
+	if telerr.Of(err) == telerr.AccountBanned {
 		cause := "This Telegram account is banned.\nLogging in again with this number will not help."
 		if m.login.AskingNumber() {
 			cause = "This phone number is banned by Telegram."
@@ -129,16 +129,16 @@ func (m RootModel) handleConnectFailed(msg ConnectFailedMsg) (RootModel, tea.Cmd
 		// Another number is the one way on, and it starts a new account (#297).
 		m.banned = true
 		cause += "\nPress Enter to log in with another number."
-		return m.routeLoginError(m.loginErrorText(cause, msg.Err.Error()))
+		return m.routeLoginError(m.loginErrorText(cause, err.Error()))
 	}
 	// An error with a kind has a phrase for it, and its own text goes underneath
 	// as the evidence. One without a kind has nothing to name beyond that text,
 	// so the cause stays plain and the text is said once.
 	cause := text
-	if _, typed := telerr.As(msg.Err); !typed {
+	if _, typed := telerr.As(err); !typed {
 		cause = connectFailedAction + "."
 	}
-	return m.routeLoginError(m.loginErrorText(cause, msg.Err.Error()))
+	return m.routeLoginError(m.loginErrorText(cause, err.Error()))
 }
 
 // handleBannedKey takes Enter on a ban's screen: the person leaves the banned

@@ -36,12 +36,15 @@ type App struct {
 	startup startup
 
 	// The App is the host: it outlives the accounts that pass through the
-	// process and holds nothing of theirs (#297). acct is the one running now
-	// and epoch the turn it has on screen; both change together, under mu,
-	// when an account ends and the next one starts.
-	mu    sync.Mutex
-	acct  *account
-	epoch uint64
+	// process and holds nothing of theirs (#297). acct is the one running now,
+	// changed under mu when an account ends and the next one starts; opened
+	// counts the accounts opened, for naming their scratch directories.
+	mu     sync.Mutex
+	acct   *account
+	opened uint64
+	// client is the TUI's attachment: its link to this host for the whole
+	// process, seated at each account's owner in turn (#309).
+	client *core.Attachment
 	// switching serialises the end of one account and the start of the next
 	// with the stop of whichever is running when the process exits.
 	switching sync.Mutex
@@ -54,13 +57,16 @@ type App struct {
 	connect  func(internaltg.Endpoint, updates.StateStorage) core.Connection
 	notifier core.Notifier
 
-	// prog draws whichever account is running, and deliver hands it a message;
-	// keyMap and noticeSeen are the person's and the machine's, so every
-	// account's model shares them.
+	// prog draws whichever account is running; keyMap and noticeSeen are the
+	// person's and the machine's, so every account's model shares them.
 	prog       *tea.Program
-	deliver    func(tea.Msg)
 	keyMap     keys.KeyMap
 	noticeSeen notices.Seen
+	// screens counts the models the client has built, and screenDir is the
+	// scratch directory of the one on screen: what it saved to show the person
+	// is the account's, and goes when the next model replaces it.
+	screens   uint64
+	screenDir string
 
 	// tmpDir holds this run's scratch files: media saved for an external
 	// player, GIFs staged for decoding, and the media cache when the user asked
@@ -160,7 +166,7 @@ func (a *App) reloadConfig() (*config.Config, error) {
 		return nil, err
 	}
 	cfg := a.cfg()
-	acct, _ := a.current()
+	acct := a.current()
 	acct.owner.SetConfig(cfg)
 	return cfg, nil
 }
@@ -214,8 +220,9 @@ func New(cfgStore *config.Store, key appkey.Key, log *zap.Logger, verbose bool, 
 		notifier: newNotifier(log),
 		tmpDir:   tmpDir,
 		verbose:  verbose,
+		client:   core.NewAttachment(),
 	}
-	if _, _, err := a.openNext(); err != nil {
+	if _, err := a.openNext(); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -232,20 +239,27 @@ func (a *App) Run() error {
 		a.log.Warn("keybindings: " + w)
 	}
 	a.keyMap = km
-	acct, epoch := a.current()
+	acct := a.current()
 	a.noticeSeen = a.openNoticeSeen(acct)
 
-	a.prog = tea.NewProgram(ui.NewShell(epoch, a.buildRoot(acct, true)))
-	a.deliver = a.prog.Send
-	a.launch(ctx, acct, epoch)
+	// The client's side of the process: the model, built again by the client
+	// itself for each account that follows, and the one stream it hears the
+	// host and the owners on.
+	a.prog = tea.NewProgram(ui.NewShell(a.buildRoot(ctx, true), func() ui.RootModel {
+		return a.buildRoot(ctx, false)
+	}))
+	go a.bridge(ctx)
+	go a.listen(ctx)
+	a.launch(ctx, acct)
 
 	_, err := a.prog.Run()
 	cancel()
+	// The client is gone: nothing the host would still tell it waits for it.
+	a.client.Detach()
 	// Whichever account is running when the program ends stops here, and not
 	// while another is taking its place.
 	a.switching.Lock()
-	last, _ := a.current()
-	last.stop()
+	a.current().stop()
 	a.switching.Unlock()
 
 	// Disable OS color-scheme reports (DEC mode 2031) enabled at startup, so the

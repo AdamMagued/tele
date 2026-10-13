@@ -20,10 +20,10 @@ type subKey struct {
 // attached is a snapshot of the clients attached now. Work done for each of
 // them runs outside the lock, so a client attaching or detaching meanwhile
 // waits for nothing it does not need.
-func (o *Owner) attached() []*Attachment {
+func (o *Owner) attached() []*seat {
 	o.clientsMu.Lock()
 	defer o.clientsMu.Unlock()
-	out := make([]*Attachment, 0, len(o.clients))
+	out := make([]*seat, 0, len(o.clients))
 	for _, a := range o.clients {
 		out = append(out, a)
 	}
@@ -45,7 +45,7 @@ func (o *Owner) Refresh() {
 // own, so a client never has to know where data comes from. There are two
 // reasons: the chat has a recorded gap, which is a hole somebody has to close,
 // and the window came back short, which is history nobody has fetched yet.
-func (o *Owner) maybeFetch(a *Attachment, id project.SubID, w project.Window) {
+func (o *Owner) maybeFetch(a *seat, id project.SubID, w project.Window) {
 	if o.client == nil {
 		return
 	}

@@ -53,18 +53,18 @@ func startNextAfterReload(t *testing.T, key appkey.Key, setting, before, after s
 	now, _ := a.cfgStore.Value(setting)
 	require.NotEqual(t, was, now, "the reload did not change %s", setting)
 
-	first, epoch := a.current()
+	first := a.current()
 	firstDatabase := databaseFile(t, first)
 	ctx, cancel := context.WithCancel(context.Background())
-	a.launch(ctx, first, epoch)
-	waitForEnd(t, h.delivered)
+	a.launch(ctx, first)
+	waitForEnd(t, a, first)
 	var endpoint internaltg.Endpoint
 	select {
 	case endpoint = <-h.endpoints:
 	case <-time.After(3 * time.Second):
 		require.Fail(t, "the next account never connected")
 	}
-	next, _ := a.current()
+	next := a.current()
 	t.Cleanup(cancel)
 	return afterReload{rig: h, first: first, next: next, firstDatabase: firstDatabase, endpoint: endpoint}
 }

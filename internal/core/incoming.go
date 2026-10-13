@@ -69,13 +69,13 @@ func (o *Owner) broadcast(ev any, quiet bool) {
 
 // tell tells this client alone that something happened, for an event that is
 // the course of its own request.
-func (a *Attachment) tell(ev any) {
+func (a *seat) tell(ev any) {
 	if !a.offer(ev) {
 		a.dropped(ev)
 	}
 }
 
-func (a *Attachment) dropped(ev any) {
+func (a *seat) dropped(ev any) {
 	a.log.Warn("event dropped: client is not draining", zap.String("event", fmt.Sprintf("%T", ev)))
 }
 

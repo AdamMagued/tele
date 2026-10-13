@@ -26,9 +26,7 @@ import (
 type account struct {
 	store *store.SQLiteStore
 	owner *core.Owner
-	// client is the TUI's attachment to the owner. It ends with the owner.
-	client *core.Attachment
-	log    *zap.Logger
+	log   *zap.Logger
 	// startup is what the process settled when it started, which the account
 	// was opened from and is drawn and removed by (#239).
 	startup startup

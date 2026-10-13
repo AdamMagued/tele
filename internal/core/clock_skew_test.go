@@ -34,7 +34,7 @@ func TestOwner_AClientAttachingDuringASkewSeesIt(t *testing.T) {
 	o := New(&config.Config{}, zap.NewNop(), state.New(store.NewMemory()), &stubConn{}, nopNotifier{})
 	o.SetClockSkew(8 * time.Minute)
 
-	c := o.Attach()
+	c := attach(o)
 	c.Subscribe(project.AccountWindow{})
 
 	d, ok := recvDelta(t, c)

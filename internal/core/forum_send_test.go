@@ -127,7 +127,7 @@ func TestSetTyping_InATopicNamesIt(t *testing.T) {
 // told which.
 func TestTypingInATopicIsReportedWithIt(t *testing.T) {
 	o := forumCmdOwner(t, &stubClient{})
-	c := o.Attach()
+	c := attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventTyping, ChatID: forumChat, TopicID: 12, TypingAction: domain.TypingActionTyping})
 

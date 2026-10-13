@@ -2,29 +2,40 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/sorokin-vladimir/tele/internal/core"
 )
 
 // Shell is the model the program runs. It outlives the accounts that pass
-// through the process, as its host does, while the RootModel inside it is
-// built for one account and replaced when that account ends (#297). Being the
-// only model the program runs, it is also where every command is stamped with
-// the account's epoch and every late message from an ended one is dropped.
+// through the process, as the client's attachment does, while the RootModel
+// inside it is built for one account and replaced when that account ends
+// (#297). The client builds the next one itself, on hearing from the host that
+// the account ended (#309).
+//
+// Being the only model the program runs, it is also where every command the
+// model starts is stamped with the model's epoch, and every late answer to one
+// from a model that was replaced is dropped. That is the client's own job: what
+// arrives on the stream is ordered by the host, but the answer to a command
+// the model ran itself never crosses the stream.
 type Shell struct {
 	epoch uint64
 	root  RootModel
+	// next builds the model for the account that follows.
+	next func() RootModel
 }
 
-// NewShell runs root as the model of the given epoch.
-func NewShell(epoch uint64, root RootModel) Shell {
-	return Shell{epoch: epoch, root: root}
+// NewShell runs root, and next for each account after it.
+func NewShell(root RootModel, next func() RootModel) Shell {
+	return Shell{epoch: 1, root: root, next: next}
 }
 
 func (s Shell) Init() tea.Cmd { return stamp(s.epoch, s.root.Init()) }
 
 // Update takes a message only from the current epoch, or one no epoch marked,
-// such as input from the terminal, and stamps whatever the model asks for.
+// such as input from the terminal or the stream, and stamps whatever the model
+// asks for.
 func (s Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if ended, ok := msg.(AccountEndedMsg); ok {
+	if ended, ok := msg.(core.AccountEnded); ok {
 		return s.nextAccount(ended)
 	}
 	if em, ok := msg.(epochMsg); ok {
@@ -40,14 +51,14 @@ func (s Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s Shell) View() tea.View { return s.root.View() }
 
-// nextAccount puts the next account's model on screen in place of the one
-// that ended. Nothing of the old model carries over but the terminal's size,
-// which belongs to neither: what an account had on screen is the account's.
-func (s Shell) nextAccount(msg AccountEndedMsg) (tea.Model, tea.Cmd) {
+// nextAccount puts a new model on screen in place of the one whose account
+// ended. Nothing of the old model carries over but the terminal's size, which
+// belongs to neither: what an account had on screen is the account's.
+func (s Shell) nextAccount(ended core.AccountEnded) (tea.Model, tea.Cmd) {
 	width, height := s.root.width, s.root.height
-	s.epoch = msg.Epoch
-	s.root = msg.Root
-	s.root.login.SetNotice(loginNotice(msg.Ended))
+	s.epoch++
+	s.root = s.next()
+	s.root.login.SetNotice(loginNotice(ended))
 	init := s.root.Init()
 	if width > 0 && height > 0 {
 		next, cmd := s.root.Update(tea.WindowSizeMsg{Width: width, Height: height})

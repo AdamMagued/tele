@@ -9,7 +9,7 @@ import (
 
 func TestPublishProgress_DeliversToTheClient(t *testing.T) {
 	o, _ := newCmdOwner(t, &stubClient{})
-	c := o.Attach()
+	c := attach(o)
 
 	o.publishProgress(Progress{ChatID: 1, Ref: "r1#0", Part: 2, Parts: 5, Done: 30, Total: 100})
 
@@ -22,7 +22,7 @@ func TestPublishProgress_DeliversToTheClient(t *testing.T) {
 
 func TestPublishProgress_DropsWhenNobodyIsDraining(t *testing.T) {
 	o, _ := newCmdOwner(t, &stubClient{})
-	c := o.Attach()
+	c := attach(o)
 
 	// More frames than the stream holds. A dropped progress frame costs one
 	// repaint; blocking the uploader would cost the upload.

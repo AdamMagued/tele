@@ -50,6 +50,11 @@ const (
 	Rejected Kind = "rejected"
 	// Internal means a bug or an unmapped condition.
 	Internal Kind = "internal"
+	// AccountEnded means the account a request was addressed to ended while it
+	// was in flight, or before it was made. Never retried: the next account
+	// may be somebody else's, and a request meant for one must not land in
+	// another (#309). It is the owner's to give, never Telegram's.
+	AccountEnded Kind = "account_ended"
 )
 
 // Reason refines Rejected: what about the content was refused. The set is

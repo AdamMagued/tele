@@ -50,7 +50,8 @@ func TestStamp_NothingToStamp(t *testing.T) {
 // page or a profile from the account that just ended must not land in the
 // next one's screen (#297).
 func TestShell_DropsWhatAnotherEpochAskedFor(t *testing.T) {
-	s := NewShell(2, mainScreenModel())
+	s := NewShell(mainScreenModel(), nextAccountRoot)
+	s.epoch = 2
 
 	next, cmd := s.Update(epochMsg{epoch: 1, msg: StatusErrMsg{Text: "from the account that ended"}})
 
@@ -59,7 +60,8 @@ func TestShell_DropsWhatAnotherEpochAskedFor(t *testing.T) {
 }
 
 func TestShell_TakesWhatItsOwnEpochAskedFor(t *testing.T) {
-	s := NewShell(2, mainScreenModel())
+	s := NewShell(mainScreenModel(), nextAccountRoot)
+	s.epoch = 2
 
 	next, _ := s.Update(epochMsg{epoch: 2, msg: StatusErrMsg{Text: "ours", Sev: components.SeverityError}})
 
@@ -68,7 +70,8 @@ func TestShell_TakesWhatItsOwnEpochAskedFor(t *testing.T) {
 
 // Input from the terminal belongs to no account and always arrives.
 func TestShell_TakesWhatNoEpochMarked(t *testing.T) {
-	s := NewShell(2, mainScreenModel())
+	s := NewShell(mainScreenModel(), nextAccountRoot)
+	s.epoch = 2
 
 	next, _ := s.Update(StatusErrMsg{Text: "unmarked", Sev: components.SeverityError})
 

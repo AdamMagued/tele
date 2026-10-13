@@ -19,16 +19,13 @@ func nextAccountRoot() RootModel {
 	return m
 }
 
-// An account that ended is replaced on screen by the next one's login, drawn at
-// the size the terminal already has, and from then on only the next account's
-// messages arrive (#297).
+// An account that ended is replaced on screen by the next one's login, built by
+// the client itself and drawn at the size the terminal already has, and from
+// then on nothing the old model asked for arrives (#297, #309).
 func TestShell_AnEndedAccountGivesWayToTheNextOne(t *testing.T) {
-	s := NewShell(1, mainScreenModel())
+	s := NewShell(mainScreenModel(), nextAccountRoot)
 
-	next, cmd := s.Update(AccountEndedMsg{
-		Epoch: 2, Root: nextAccountRoot(),
-		Ended: core.AccountEnded{Reason: core.EndLoggedOutElsewhere},
-	})
+	next, cmd := s.Update(core.AccountEnded{Reason: core.EndLoggedOutElsewhere})
 	s = next.(Shell)
 
 	assert.NotNil(t, cmd, "the next model starts")
@@ -43,11 +40,8 @@ func TestShell_AnEndedAccountGivesWayToTheNextOne(t *testing.T) {
 // The person is told why they are back at the login, under the number field,
 // and how many unsent messages went with the account.
 func TestShell_TheNextLoginSaysWhyTheLastAccountEnded(t *testing.T) {
-	s := NewShell(1, mainScreenModel())
-	next, _ := s.Update(AccountEndedMsg{
-		Epoch: 2, Root: nextAccountRoot(),
-		Ended: core.AccountEnded{Reason: core.EndLoggedOutElsewhere, Discarded: 3},
-	})
+	s := NewShell(mainScreenModel(), nextAccountRoot)
+	next, _ := s.Update(core.AccountEnded{Reason: core.EndLoggedOutElsewhere, Discarded: 3})
 
 	next, _ = next.Update(epochMsg{epoch: 2, msg: screens.AuthRequestMsg{Step: project.LoginPhone}})
 
@@ -73,8 +67,8 @@ func TestLoginNotice_NamesEachEnd(t *testing.T) {
 
 // The tick that kept the old model's screen alive is not the new one's.
 func TestShell_ResizeAfterTheSwitchReachesTheNextModel(t *testing.T) {
-	s := NewShell(1, mainScreenModel())
-	next, _ := s.Update(AccountEndedMsg{Epoch: 2, Root: nextAccountRoot()})
+	s := NewShell(mainScreenModel(), nextAccountRoot)
+	next, _ := s.Update(core.AccountEnded{})
 
 	next, _ = next.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
 

@@ -50,6 +50,13 @@ func silent[T any](t *testing.T, a *Attachment) bool {
 	}
 }
 
+// attach attaches a client and seats it at o, the way the host does.
+func attach(o *Owner) *Attachment {
+	a := NewAttachment()
+	a.Join(o)
+	return a
+}
+
 // testClients is the one client a test attaches to each owner, for the tests
 // about an owner with a single client.
 var (
@@ -65,7 +72,7 @@ func testClient(o *Owner) *Attachment {
 	defer testClientsMu.Unlock()
 	a, ok := testClients[o]
 	if !ok {
-		a = o.Attach()
+		a = attach(o)
 		testClients[o] = a
 	}
 	return a
@@ -106,7 +113,7 @@ func recvDelta(t *testing.T, a *Attachment) (project.Delta, bool) {
 func TestAttachment_EachClientHearsItsOwnSubscriptions(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1, Title: "A"})
-	a, b := o.Attach(), o.Attach()
+	a, b := attach(o), attach(o)
 
 	ida := a.Subscribe(project.ChatListWindow{Limit: 10})
 	idb := b.Subscribe(project.ChatListWindow{Limit: 10})
@@ -131,7 +138,7 @@ func TestAttachment_EachClientHearsItsOwnSubscriptions(t *testing.T) {
 // subscription just replaced must not be read as the new one's.
 func TestAttachment_SubscriptionIDsAreNeverReused(t *testing.T) {
 	o, _, _ := newTestOwner(t)
-	a := o.Attach()
+	a := attach(o)
 
 	first := a.Subscribe(project.ChatListWindow{Limit: 10})
 	a.Unsubscribe(first)
@@ -145,7 +152,7 @@ func TestAttachment_SubscriptionIDsAreNeverReused(t *testing.T) {
 func TestAttachment_AStalledClientDoesNotStarveAnother(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1, Title: "A"})
-	stalled, live := o.Attach(), o.Attach()
+	stalled, live := attach(o), attach(o)
 	stalled.Subscribe(project.ChatListWindow{Limit: 10})
 	live.Subscribe(project.ChatListWindow{Limit: 10})
 	_, _ = recvDelta(t, stalled)
@@ -177,7 +184,7 @@ func TestAttachment_AStalledClientDoesNotStarveAnother(t *testing.T) {
 func TestAttachment_ADetachedClientHearsNothing(t *testing.T) {
 	o, events, st := newTestOwner(t)
 	st.SetChat(domain.Chat{ID: 1})
-	a := o.Attach()
+	a := attach(o)
 	a.Subscribe(project.ChatListWindow{Limit: 10})
 	_, _ = recvDelta(t, a)
 	a.Detach()
@@ -195,7 +202,7 @@ func TestAttachment_ADetachedClientHearsNothing(t *testing.T) {
 func TestAttachment_EventsReachEveryClient(t *testing.T) {
 	o, st := newTestOwnerNotified(t, &mockNotifier{})
 	st.SetChat(domain.Chat{ID: 2, Title: "Bob"})
-	a, b := o.Attach(), o.Attach()
+	a, b := attach(o), attach(o)
 
 	o.handleEvent(store.Event{Kind: store.EventNewMessage,
 		Message: domain.Message{ID: 1, ChatID: 2, Text: "hello", Date: time.Now()}})
@@ -217,7 +224,7 @@ func TestAttachment_EventsReachEveryClient(t *testing.T) {
 // Download progress is the course of one call, so only the caller hears it.
 func TestAttachment_DownloadProgressGoesToTheCallerOnly(t *testing.T) {
 	o := sizedDocOwner(t, 1000)
-	caller, other := o.Attach(), o.Attach()
+	caller, other := attach(o), attach(o)
 
 	_, err := caller.SaveMedia(context.Background(), 1, 5, domain.DocFull, t.TempDir(), "r1")
 	require.NoError(t, err)
@@ -234,7 +241,7 @@ func TestAttachment_AFailedHistoryLoadGoesToItsSubscriber(t *testing.T) {
 	c := &stubConn{histErr: errors.New("boom")}
 	o, s := newOwnerWithClient(t, c)
 	s.Store().SetChat(domain.Chat{ID: 7, Peer: domain.Peer{ID: 7, Type: domain.PeerUser}})
-	asker, other := o.Attach(), o.Attach()
+	asker, other := attach(o), attach(o)
 
 	asker.Subscribe(project.HistoryWindow{ChatID: 7, Before: 10})
 
@@ -247,7 +254,7 @@ func TestAttachment_AFailedHistoryLoadGoesToItsSubscriber(t *testing.T) {
 // The send queue is shared, so a send it gave up on is every client's news.
 func TestAttachment_AGivenUpSendReachesEveryClient(t *testing.T) {
 	o, _, _ := newTestOwner(t)
-	a, b := o.Attach(), o.Attach()
+	a, b := attach(o), attach(o)
 
 	o.publishFailure(Failure{ChatID: 1, Op: OpSend, Err: errors.New("refused")})
 
@@ -266,7 +273,7 @@ func TestAttachment_TwoClientsOnOneChat(t *testing.T) {
 	o.SetOutbox(newOutboxStore(t))
 	st.SetChat(domain.Chat{ID: 1, Title: "Ada", Peer: domain.Peer{ID: 1, Type: domain.PeerUser}, UnreadCount: 1})
 	st.SetMessages(1, []domain.Message{{ID: 9, ChatID: 1, Text: "hi", Date: time.Unix(9, 0)}})
-	a, b := o.Attach(), o.Attach()
+	a, b := attach(o), attach(o)
 	h := domain.HistoryKey{ChatID: 1}
 	a.SetFocus(h)
 	b.SetFocus(h)

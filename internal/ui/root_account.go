@@ -38,7 +38,7 @@ func (m RootModel) handleAccountDelta(next project.AccountContents) (RootModel, 
 		route(screens.TransitionToMainMsg{})
 	}
 	if next.Ended != nil && (prev.Ended == nil || prev.Ended.Error() != next.Ended.Error()) {
-		updated, cmd := m.handleConnectFailed(ConnectFailedMsg{Err: next.Ended})
+		updated, cmd := m.handleConnectFailed(next.Ended)
 		m = updated
 		cmds = append(cmds, cmd)
 	}

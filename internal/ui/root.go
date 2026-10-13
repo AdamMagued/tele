@@ -597,8 +597,10 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLogOutPreview(msg)
 	case logOutDoneMsg:
 		return m.handleLogOutDone(msg)
-	case ConnectFailedMsg:
-		return m.handleConnectFailed(msg)
+	case core.HostFailure:
+		// What the host could not do lands where a connection that ended
+		// does: on the login screen, or in a toast that stays (#309).
+		return m.handleConnectFailed(msg.Err)
 	case screens.LoginAnswerMsg:
 		return m.handleLoginAnswer(msg)
 	case clipboardImagePastedMsg:
