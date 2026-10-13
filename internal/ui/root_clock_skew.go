@@ -5,23 +5,20 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
-	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/ui/theme"
 )
 
 // handleClockSkew records how far the clock is from Telegram's (#277). On the
 // login screen it is read by connectingText; after login it is a segment of the
 // status bar, which stays until the skew is over.
-func (m RootModel) handleClockSkew(msg core.ClockSkew) (RootModel, tea.Cmd) {
-	m.clockSkew = msg.Skew
+func (m RootModel) handleClockSkew(skew time.Duration) RootModel {
+	m.clockSkew = skew
 	text := ""
-	if msg.Skew != 0 {
-		text = "clock " + skewWords(msg.Skew, true) + " Telegram"
+	if skew != 0 {
+		text = "clock " + skewWords(skew, true) + " Telegram"
 	}
 	m.statusBar.SetClockSkew(text)
-	return m, nil
+	return m
 }
 
 // clockSkewText is what the connecting screen says while the clock is skewed:

@@ -3,7 +3,6 @@ package ui
 import (
 	"image"
 
-	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 )
 
@@ -88,10 +87,6 @@ type voiceTickMsg struct{}
 // ticks were superseded by a newer width change.
 type retransmitTickMsg struct {
 	gen int
-}
-
-type FolderFiltersMsg struct {
-	Filters []domain.FolderFilter
 }
 
 type clearTypingMsg struct{ serial int }

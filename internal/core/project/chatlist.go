@@ -21,11 +21,14 @@ type ChatRow struct {
 	IsForum bool
 }
 
-// FolderCounts is the folder pane's derived state: how many chats carry unread
-// per folder, and whether an Archive entry should exist at all. Both are
-// functions of the whole list, which is why a client holding a window cannot
-// compute them.
+// FolderCounts is the folder pane's state: which folders there are, how many
+// chats carry unread per folder, and whether an Archive entry should exist at
+// all. The counts are functions of the whole list, which is why a client
+// holding a window cannot compute them; the folders themselves are account
+// state a client attaching later must still see, so they travel here rather
+// than as a message of their own (#309).
 type FolderCounts struct {
+	Filters        []domain.FolderFilter
 	Unread         map[int]int
 	ArchivePresent bool
 }
@@ -164,7 +167,7 @@ func filterByID(filters []domain.FolderFilter, id int) (domain.FolderFilter, boo
 // All Chats carries no badge and Archive intentionally shows no count, matching
 // the official client.
 func folderCounts(r Reader, all []domain.Chat, filters []domain.FolderFilter) FolderCounts {
-	fc := FolderCounts{Unread: make(map[int]int)}
+	fc := FolderCounts{Filters: filters, Unread: make(map[int]int)}
 	for _, c := range all {
 		if c.IsArchived {
 			fc.ArchivePresent = true

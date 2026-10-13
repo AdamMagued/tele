@@ -1,7 +1,6 @@
 package screens
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -9,14 +8,25 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
+
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 )
 
 type AuthRequestMsg struct {
-	Step internaltg.AuthStep
+	Step project.LoginStepKind
 	Hint string
 	// Err is why the step is asked again, shown under the field (#285).
 	Err string
+	// Seq names this asking of the step, for the answer to name back.
+	Seq int
+}
+
+// LoginAnswerMsg is what was typed at a login step, for the root to hand to
+// the owner. It names the asking it answers, so an answer to a step already
+// answered elsewhere is refused rather than taken for the next (#309).
+type LoginAnswerMsg struct {
+	Seq   int
+	Value string
 }
 type AuthErrorMsg struct{ Text string }
 type ConnectedMsg struct{}
@@ -38,28 +48,11 @@ func SlowConnectTick() tea.Cmd {
 	return tea.Tick(SlowConnectAfter, func(time.Time) tea.Msg { return SlowConnectMsg{} })
 }
 
-// WaitForAuthRequest returns a Cmd that blocks until AuthFlow sends a request,
-// an error, or ready closes. It gives up with nil when ctx ends: the account it
-// waits on is ending, and a login nobody finished must not hold that up (#297).
-func WaitForAuthRequest(ctx context.Context, af *internaltg.AuthFlow, ready <-chan struct{}) tea.Cmd {
-	return func() tea.Msg {
-		select {
-		case <-ctx.Done():
-			return nil
-		case req := <-af.Requests:
-			return AuthRequestMsg{Step: req.Step, Hint: req.Hint, Err: req.Err}
-		case <-ready:
-			return ConnectedMsg{}
-		case text := <-af.Errors:
-			return AuthErrorMsg{Text: text}
-		}
-	}
-}
-
 type LoginModel struct {
-	af     *internaltg.AuthFlow
-	input  textinput.Model
-	step   internaltg.AuthStep
+	input textinput.Model
+	step  project.LoginStepKind
+	// seq names the asking of the step on screen.
+	seq    int
 	prompt string
 	err    string
 	// notice says why the person is at the login, under the number the first
@@ -73,7 +66,7 @@ type LoginModel struct {
 // why the person is back at the login.
 func (m *LoginModel) SetNotice(text string) { m.notice = text }
 
-func NewLoginModel(af *internaltg.AuthFlow) LoginModel {
+func NewLoginModel() LoginModel {
 	ti := textinput.New()
 	ti.Focus()
 	ti.SetWidth(40)
@@ -82,13 +75,12 @@ func NewLoginModel(af *internaltg.AuthFlow) LoginModel {
 	// of its own that never comes back to it through the root.
 	ti.KeyMap.Paste = key.NewBinding()
 	return LoginModel{
-		af:    af,
 		input: ti,
 		step:  -1,
 	}
 }
 
-func (m LoginModel) CurrentStep() internaltg.AuthStep { return m.step }
+func (m LoginModel) CurrentStep() project.LoginStepKind { return m.step }
 
 // Connecting reports whether Telegram has not answered yet: no prompt has been
 // asked for and nothing has failed. The error step is negative too, which is why
@@ -97,7 +89,7 @@ func (m LoginModel) Connecting() bool { return m.step == -1 }
 
 // AskingNumber reports whether the phone number is the step on screen, which
 // is also the step a failure just after it was entered arrived on.
-func (m LoginModel) AskingNumber() bool { return m.step == internaltg.AuthStepPhone }
+func (m LoginModel) AskingNumber() bool { return m.step == project.LoginPhone }
 
 // Slow reports whether the connection is still being waited for past
 // SlowConnectAfter.
@@ -117,8 +109,9 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AuthRequestMsg:
 		m.step = msg.Step
+		m.seq = msg.Seq
 		m.err = msg.Err
-		if msg.Step == internaltg.AuthStepPhone && m.notice != "" {
+		if msg.Step == project.LoginPhone && m.notice != "" {
 			// Said once: a number asked for again has a reason of its own.
 			if m.err == "" {
 				m.err = m.notice
@@ -126,16 +119,16 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 		}
 		switch msg.Step {
-		case internaltg.AuthStepPhone:
+		case project.LoginPhone:
 			m.prompt = "Enter phone number:"
 			m.input.Placeholder = "+1234567890"
-		case internaltg.AuthStepCode:
+		case project.LoginCode:
 			m.prompt = msg.Hint
 			if m.prompt == "" {
 				m.prompt = "Enter the login code:"
 			}
 			m.input.Placeholder = "12345"
-		case internaltg.AuthStepPassword:
+		case project.LoginPassword:
 			m.prompt = "Enter 2FA password:"
 			m.input.EchoMode = textinput.EchoPassword
 			m.input.Placeholder = "password"
@@ -157,15 +150,12 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A copied number or code often brings a space or a line break
 			// along, which Telegram would refuse. A password is sent as typed:
 			// a space may be part of it, and Telegram trims nothing (#284).
-			if m.step != internaltg.AuthStepPassword {
+			if m.step != project.LoginPassword {
 				val = strings.TrimSpace(val)
 			}
-			af := m.af
-			go func() {
-				af.Responses <- internaltg.AuthResponse{Value: val}
-			}()
+			answer := LoginAnswerMsg{Seq: m.seq, Value: val}
 			m.input.Reset()
-			return m, nil
+			return m, func() tea.Msg { return answer }
 		}
 	}
 

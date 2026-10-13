@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
-	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
 
@@ -14,7 +14,7 @@ import (
 // arrives as a bracketed paste, and on the login screen it used to be dropped
 // before it reached the field (#284).
 func TestLogin_TerminalPasteReachesTheField(t *testing.T) {
-	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: internaltg.AuthStepPhone})
+	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: project.LoginPhone})
 
 	view := withLoginStep(t, m, tea.PasteMsg{Content: "+447700900123"}).View().Content
 
@@ -23,7 +23,7 @@ func TestLogin_TerminalPasteReachesTheField(t *testing.T) {
 
 // Pasted into the password field, it is masked like typed text.
 func TestLogin_PastedPasswordIsMasked(t *testing.T) {
-	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: internaltg.AuthStepPassword})
+	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: project.LoginPassword})
 
 	view := withLoginStep(t, m, tea.PasteMsg{Content: "hunter2secret"}).View().Content
 

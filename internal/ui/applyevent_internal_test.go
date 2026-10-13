@@ -18,6 +18,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/store"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
+	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
 
 // ownerStub is the in-package twin of the ui_test testOwner: one state and one
@@ -39,6 +40,8 @@ type ownerStub struct {
 	// lastSub is the last subscription id handed out: ids are the client's to
 	// choose and are never reused (#309).
 	lastSub project.SubID
+	// answers records the login answers, in order.
+	answers []screens.LoginAnswerMsg
 
 	// calls records the commands the UI issued, so a test can assert on what
 	// was asked for rather than on how the result was rendered. err is what
@@ -94,6 +97,12 @@ type ownerStub struct {
 
 func (o *ownerStub) EndAccount(reason core.EndReason) { o.endedWith = append(o.endedWith, reason) }
 
+// AnswerLogin records what the login screen answered.
+func (o *ownerStub) AnswerLogin(_ context.Context, seq int, value string) error {
+	o.answers = append(o.answers, screens.LoginAnswerMsg{Seq: seq, Value: value})
+	return nil
+}
+
 func (o *ownerStub) LogOutPreview() core.LogOutPreview { return o.logOutPreview }
 
 func (o *ownerStub) LogOut(_ context.Context, tellTelegram bool) error {
@@ -138,6 +147,8 @@ type cmdCall struct {
 type storeReader struct{ store.Store }
 
 func (storeReader) Outbox(domain.HistoryKey) []domain.OutboxEntry { return nil }
+
+func (storeReader) Account() project.AccountContents { return project.AccountContents{} }
 
 func newOwnerStub(st store.Store) *ownerStub {
 	o := &ownerStub{state: state.New(st), mediaPaths: make(map[mediaKey]string)}

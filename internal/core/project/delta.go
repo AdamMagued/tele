@@ -7,4 +7,5 @@ type Delta struct {
 	ChatList  *ChatListDelta
 	History   *HistoryDelta
 	TopicList *TopicListDelta
+	Account   *AccountDelta
 }

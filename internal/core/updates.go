@@ -14,11 +14,17 @@ import (
 
 // Start connects to Telegram and runs until ctx is cancelled. The caller runs it
 // in its own goroutine; the update loop is started separately by RunUpdates.
+// The login, and loading the account once it is logged in, are the owner's own
+// work alongside it; what the connection ended with is part of the account
+// (#309).
 func (o *Owner) Start(ctx context.Context) error {
-	return o.client.Connect(ctx, o.authFlow, o.readyCh, func(userID int64, username string) {
+	o.spawn(func() { o.runLogin(ctx) })
+	err := o.client.Connect(ctx, o.authFlow, o.readyCh, func(userID int64, username string) {
 		o.state.Store().SetOwnerID(userID)
 		o.onAuth(userID, username)
 	})
+	o.connectionEnded(ctx, err)
+	return err
 }
 
 // RunUpdates applies incoming Telegram events to domain state and makes the

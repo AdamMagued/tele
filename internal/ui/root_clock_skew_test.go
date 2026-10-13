@@ -7,14 +7,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 )
+
+// skewed is the account while connecting with the clock off by d.
+func skewed(m ui.RootModel, d time.Duration) tea.Msg {
+	return accountIs(m, project.AccountContents{ClockSkew: d})
+}
 
 // A skewed clock is a known cause, so the connecting screen names it the moment
 // it is found rather than after the wait that suggests causes (#277).
 func TestLogin_ClockSkewIsNamedAtOnce(t *testing.T) {
-	view := withLoginStep(t, sizedLoginRoot(t), core.ClockSkew{Skew: 8 * time.Minute}).View().Content
+	m := sizedLoginRoot(t)
+	view := withLoginStep(t, m, skewed(m, 8*time.Minute)).View().Content
 
 	assert.Contains(t, view, "Your clock is 8 minutes ahead of Telegram's.")
 	assert.Contains(t, view, "Telegram refuses every message until it is set right.")
@@ -24,7 +30,8 @@ func TestLogin_ClockSkewIsNamedAtOnce(t *testing.T) {
 }
 
 func TestLogin_ClockBehindIsSaidInSeconds(t *testing.T) {
-	view := withLoginStep(t, sizedLoginRoot(t), core.ClockSkew{Skew: -45 * time.Second}).View().Content
+	m := sizedLoginRoot(t)
+	view := withLoginStep(t, m, skewed(m, -45*time.Second)).View().Content
 
 	assert.Contains(t, view, "Your clock is 45 seconds behind Telegram's.")
 }
@@ -32,9 +39,10 @@ func TestLogin_ClockBehindIsSaidInSeconds(t *testing.T) {
 // Setting the clock right lets the same attempt through, so the screen goes
 // back to connecting rather than staying on a cause that is gone.
 func TestLogin_ClockSetRightGoesBackToConnecting(t *testing.T) {
-	m := withLoginStep(t, sizedLoginRoot(t), core.ClockSkew{Skew: 8 * time.Minute})
+	m := sizedLoginRoot(t)
+	m = withLoginStep(t, m, skewed(m, 8*time.Minute))
 
-	view := withLoginStep(t, m, core.ClockSkew{}).View().Content
+	view := withLoginStep(t, m, skewed(m, 0)).View().Content
 
 	assert.Contains(t, view, "connecting...")
 	assert.NotContains(t, view, "Your clock")
@@ -46,13 +54,13 @@ func TestLogin_ClockSetRightGoesBackToConnecting(t *testing.T) {
 func TestMain_ClockSkewStaysInTheStatusBar(t *testing.T) {
 	m := ui.NewRootModel(false).WithScreen(ui.ScreenMain)
 	m = withLoginStep(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = withLoginStep(t, m, core.ClockSkew{Skew: 8 * time.Minute})
+	m = withLoginStep(t, m, skewed(m, 8*time.Minute))
 
 	assert.Contains(t, m.View().Content, "clock 8m ahead of Telegram")
 
 	m = withLoginStep(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	assert.Contains(t, m.View().Content, "clock 8m ahead of Telegram")
 
-	m = withLoginStep(t, m, core.ClockSkew{})
+	m = withLoginStep(t, m, skewed(m, 0))
 	assert.NotContains(t, m.View().Content, "clock 8m ahead")
 }

@@ -30,6 +30,11 @@ type sub struct {
 	list   ChatListContents
 	chat   HistoryContents
 	topics TopicListContents
+	// account is the account as last told, and accountTold whether it has been
+	// told at all: unlike a list, an account has no empty state to diff a first
+	// build against.
+	account     AccountContents
+	accountTold bool
 }
 
 func NewRegistry(r Reader, emit Emit) *Registry {
@@ -128,6 +133,7 @@ func (g *Registry) send(ds []Delta) {
 			s.list = ChatListContents{}
 			s.chat = HistoryContents{}
 			s.topics = TopicListContents{}
+			s.accountTold = false
 		}
 	}
 }
@@ -161,6 +167,12 @@ func (g *Registry) rebuild(id SubID) []Delta {
 			out = append(out, Delta{Sub: id, TopicList: &d})
 		}
 		s.topics = next
+	case AccountWindow:
+		next := BuildAccount(g.reader)
+		if !s.accountTold || !sameAccount(s.account, next) {
+			out = append(out, Delta{Sub: id, Account: &AccountDelta{Contents: next}})
+		}
+		s.account, s.accountTold = next, true
 	case HistoryWindow:
 		next := BuildHistory(g.reader, w)
 		// Pin a first-unread window to the message it actually opened on. The

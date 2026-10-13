@@ -219,7 +219,7 @@ func TestHost_TheNextAccountConnectsWithTheBuiltInKeyAfterAReload(t *testing.T) 
 func TestHost_WhatAnAccountSendsIsMarkedWithItsEpoch(t *testing.T) {
 	a, delivered, _ := testHost(t)
 
-	a.send(7, ui.FolderFiltersMsg{})
+	a.send(7, ui.ConnectFailedMsg{})
 
-	assert.Equal(t, ui.Stamped(7, ui.FolderFiltersMsg{}), <-delivered)
+	assert.Equal(t, ui.Stamped(7, ui.ConnectFailedMsg{}), <-delivered)
 }

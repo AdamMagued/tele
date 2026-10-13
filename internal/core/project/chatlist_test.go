@@ -22,6 +22,7 @@ type fakeReader struct {
 	// the order the store would list them.
 	topicMsgs map[domain.HistoryKey][]domain.Message
 	topics    map[int64][]domain.Topic
+	account   project.AccountContents
 }
 
 func (f *fakeReader) Topics(chatID int64) []domain.Topic { return f.topics[chatID] }
@@ -56,6 +57,8 @@ func (f *fakeReader) Messages(h domain.HistoryKey) []domain.Message {
 func (f *fakeReader) FolderFilters() []domain.FolderFilter { return f.filters }
 
 func (f *fakeReader) Outbox(h domain.HistoryKey) []domain.OutboxEntry { return f.outbox[h.ChatID] }
+
+func (f *fakeReader) Account() project.AccountContents { return f.account }
 
 func chats(n int) []domain.Chat {
 	out := make([]domain.Chat, 0, n)

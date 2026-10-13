@@ -93,21 +93,6 @@ func (m RootModel) updateUIMsg(msg tea.Msg) (RootModel, tea.Cmd) {
 		m.requestKittyReset()
 		return m, nil
 
-	case FolderFiltersMsg:
-		if m.folderBar != nil {
-			m.folderBar.SetFolders(msg.Filters)
-			if m.width > 0 && m.height > 0 {
-				lay := computeLayout(m.width, m.height, m.chat.ComposerHeight(),
-					m.folderBar.HasFolders())
-				if lay.hasFolders {
-					m.folderBar.SetSize(lay.folders.Width, lay.folders.Height)
-				}
-				m.chatList.SetSize(lay.chatList.Width, lay.chatList.Height)
-				m.chat.SetSize(lay.messages.Width, lay.messages.Height+lay.composer.Height)
-			}
-		}
-		return m, m.retransmitOnColsChange()
-
 	case screens.FolderSelectedMsg:
 		folder := 0
 		if msg.Filter != nil {

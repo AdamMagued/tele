@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
@@ -17,7 +17,7 @@ import (
 // on the login screen, with a live login model.
 func newLoginRoot() ui.RootModel {
 	m := ui.NewRootModel(false)
-	m.SetLoginModel(screens.NewLoginModel(internaltg.NewAuthFlow()))
+	m.SetLoginModel(screens.NewLoginModel())
 	return m
 }
 
@@ -45,9 +45,9 @@ func withLoginStep(t *testing.T, m ui.RootModel, msg tea.Msg) ui.RootModel {
 func TestLogin_ModifierQuitBindingQuitsOnEveryStep(t *testing.T) {
 	steps := map[string]tea.Msg{
 		"connecting": nil,
-		"phone":      screens.AuthRequestMsg{Step: internaltg.AuthStepPhone},
-		"code":       screens.AuthRequestMsg{Step: internaltg.AuthStepCode},
-		"password":   screens.AuthRequestMsg{Step: internaltg.AuthStepPassword},
+		"phone":      screens.AuthRequestMsg{Step: project.LoginPhone},
+		"code":       screens.AuthRequestMsg{Step: project.LoginCode},
+		"password":   screens.AuthRequestMsg{Step: project.LoginPassword},
 		"error":      screens.AuthErrorMsg{Text: "boom"},
 	}
 	presses := map[string]tea.KeyPressMsg{
@@ -72,7 +72,7 @@ func TestLogin_ModifierQuitBindingQuitsOnEveryStep(t *testing.T) {
 // field, so on this screen it is text and never a quit.
 func TestLogin_BareQIsTypedNotQuit(t *testing.T) {
 	m := withLoginStep(t, newLoginRoot(), tea.WindowSizeMsg{Width: 100, Height: 40})
-	m = withLoginStep(t, m, screens.AuthRequestMsg{Step: internaltg.AuthStepPhone})
+	m = withLoginStep(t, m, screens.AuthRequestMsg{Step: project.LoginPhone})
 
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 

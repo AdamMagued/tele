@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	"go.uber.org/zap"
@@ -89,7 +88,7 @@ func (a *App) buildRoot(acct *account, first bool) ui.RootModel {
 	root := ui.NewRootModel(a.verbose)
 	root = root.WithContext(acct.ctx).WithImageMode(acct.startup.imageMode).WithConfig(cfg).WithKeyMap(a.keyMap).WithOwner(acct.client).
 		WithLogger(a.log).WithConfigReload(a.reloadConfig).WithSettingsStore(a.cfgStore).WithLogPath(a.logPath)
-	root.SetLoginModel(screens.NewLoginModel(acct.owner.AuthFlow()))
+	root.SetLoginModel(screens.NewLoginModel())
 	root.SetTmpDir(acct.tmpDir)
 	if first {
 		// Seen-state is written on dismissal, so quitting before the countdown
@@ -124,11 +123,11 @@ func (a *App) send(epoch uint64, msg tea.Msg) {
 	a.deliver(ui.Stamped(epoch, msg))
 }
 
-// launch runs acct with the work the host does for it: the two bridges to its
-// model, and listening for the client to ask for the account to end.
+// launch runs acct with the work the host does for it: the bridge to its model,
+// and listening for the client to ask for the account to end.
 func (a *App) launch(ctx context.Context, acct *account, epoch uint64) {
 	acct.run(ctx, a.connectionEnded(ctx, acct, epoch),
-		a.authBridge(acct, epoch), a.deltaBridge(acct, epoch), a.endRequests(ctx, acct, epoch))
+		a.deltaBridge(acct, epoch), a.endRequests(ctx, acct, epoch))
 }
 
 // endRequests ends acct when its client asks: for an end the connection did not
@@ -146,9 +145,10 @@ func (a *App) endRequests(hostCtx context.Context, acct *account, epoch uint64) 
 }
 
 // connectionEnded is told what acct's connection ended with. A log out ends the
-// account and starts the next one. Anything else is kept for the exit code and
-// shown while the program still runs: waiting for the exit to report it meant
-// nobody saw it, on a screen nobody could quit (#283).
+// account and starts the next one. Anything else is kept for the exit code;
+// the account shows it to its clients while the program still runs, since
+// waiting for the exit to report it meant nobody saw it, on a screen nobody
+// could quit (#283, #309).
 func (a *App) connectionEnded(ctx context.Context, acct *account, epoch uint64) func(error) {
 	return func(err error) {
 		if ctx.Err() == nil {
@@ -162,9 +162,6 @@ func (a *App) connectionEnded(ctx context.Context, acct *account, epoch uint64) 
 		a.mu.Lock()
 		a.exitErr = err
 		a.mu.Unlock()
-		if err != nil && ctx.Err() == nil {
-			a.send(epoch, ui.ConnectFailedMsg{Err: err})
-		}
 	}
 }
 
@@ -217,74 +214,17 @@ func (a *App) endAccount(ctx context.Context, acct *account, epoch uint64, reaso
 	a.launch(ctx, next, nextEpoch)
 }
 
-// authBridge carries acct's login to its model, and once logged in loads the
-// dialog list and the folders. It is the account's work: stop waits for it,
-// since loading writes to the database stop closes.
-func (a *App) authBridge(acct *account, epoch uint64) func(context.Context) {
-	return func(ctx context.Context) {
-		owner := acct.owner
-		for {
-			msg := screens.WaitForAuthRequest(ctx, owner.AuthFlow(), owner.Ready())()
-			if msg == nil {
-				return
-			}
-			a.send(epoch, msg)
-			if req, isReq := msg.(screens.AuthRequestMsg); isReq {
-				a.log.Debug("auth step requested", zap.Int("step", int(req.Step)))
-			}
-			if _, done := msg.(screens.ConnectedMsg); done {
-				a.log.Info("connected, loading dialogs")
-				break
-			}
-			if errMsg, failed := msg.(screens.AuthErrorMsg); failed {
-				a.log.Error("auth error", zap.String("reason", errMsg.Text))
-				return
-			}
-		}
-
-		var loads sync.WaitGroup
-		loads.Add(2)
-		// Connected: the owner loads the authoritative dialog list.
-		go func() {
-			defer loads.Done()
-			if err := owner.Bootstrap(ctx); err != nil {
-				a.log.Error("GetDialogs failed", zap.Error(err))
-				return
-			}
-			a.send(epoch, screens.TransitionToMainMsg{})
-		}()
-		// Cached folder filters at once, then the network's.
-		if cached := acct.store.FolderFilters(); len(cached) > 0 {
-			a.send(epoch, ui.FolderFiltersMsg{Filters: cached})
-		}
-		go func() {
-			defer loads.Done()
-			filters, err := owner.LoadFolderFilters(ctx)
-			if err != nil {
-				a.log.Warn("GetDialogFilters failed", zap.Error(err))
-				return
-			}
-			if len(filters) > 0 {
-				a.send(epoch, ui.FolderFiltersMsg{Filters: filters})
-			}
-		}()
-		loads.Wait()
-	}
-}
-
 // deltaBridge carries what is addressed to acct's client to its model: the
-// client's one stream, and the clock skew until it moves into a projection.
+// client's one stream, deltas and events alike.
 func (a *App) deltaBridge(acct *account, epoch uint64) func(context.Context) {
 	return func(ctx context.Context) {
 		for {
-			var msg tea.Msg
 			select {
 			case <-ctx.Done():
 				return
-			case msg = <-acct.client.Stream():
-			case msg = <-acct.owner.ClockSkew():
+			case msg := <-acct.client.Stream():
+				a.send(epoch, msg)
 			}
-			a.send(epoch, msg)
 		}
 	}
 }

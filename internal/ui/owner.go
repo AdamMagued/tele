@@ -24,6 +24,10 @@ type Owner interface {
 	// EndAccount asks for the account to end when nothing ended its connection
 	// for it, such as leaving a banned account.
 	EndAccount(reason core.EndReason)
+	// AnswerLogin answers the login step the account projection shows, named
+	// by its Seq. An answer for a step already answered, here or by another
+	// client, is refused (#309).
+	AnswerLogin(ctx context.Context, seq int, value string) error
 
 	// Commands. Each applies its own optimistic change and undoes it if
 	// Telegram refuses, so the client only decides how a failure looks.
@@ -103,9 +107,13 @@ type Owner interface {
 // an owner command, whose commit rebuilds the projections and pushes a delta.
 // Nothing has to remember to repaint (#198).
 
-// WithOwner attaches the owner the model subscribes to.
+// WithOwner attaches the owner the model subscribes to, and subscribes to the
+// account at once: the login screen is drawn from it.
 func (m RootModel) WithOwner(o Owner) RootModel {
 	m.owner = o
+	if o != nil {
+		m.accountSub = o.Subscribe(project.AccountWindow{})
+	}
 	return m
 }
 

@@ -106,7 +106,12 @@ type RootModel struct {
 	// clockSkew is how far the local clock is from Telegram's, zero when it is
 	// close enough to be accepted (#277).
 	clockSkew time.Duration
-	cfg       *config.Config
+	// accountSub is the account subscription, and account what it last said:
+	// the login screen, the connection's end and the clock are drawn from it
+	// (#309).
+	accountSub project.SubID
+	account    project.AccountContents
+	cfg        *config.Config
 	// reloadConfig re-reads the config file and hands the result to everything
 	// else holding one. Supplied by the app; nil in tests and wherever nothing
 	// can be reloaded, in which case the reload action reloads themes alone.
@@ -594,8 +599,8 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLogOutDone(msg)
 	case ConnectFailedMsg:
 		return m.handleConnectFailed(msg)
-	case core.ClockSkew:
-		return m.handleClockSkew(msg)
+	case screens.LoginAnswerMsg:
+		return m.handleLoginAnswer(msg)
 	case clipboardImagePastedMsg:
 		return m.handleClipboardImagePasted(msg)
 	case components.ComposerLimitMsg:
@@ -683,7 +688,6 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg,
 		tea.WindowSizeMsg,
 		retransmitTickMsg,
-		FolderFiltersMsg,
 		screens.FolderSelectedMsg,
 		screens.TransitionToMainMsg,
 		screens.CloseSearchMsg,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 )
 
@@ -21,6 +22,8 @@ func (m RootModel) handleDelta(d project.Delta) (RootModel, tea.Cmd) {
 		return m.handleChatDelta(d.History)
 	case d.TopicList != nil && d.Sub == m.topicSub:
 		return m.handleTopicListDelta(d.TopicList)
+	case d.Account != nil && d.Sub == m.accountSub:
+		return m.handleAccountDelta(d.Account.Contents)
 	}
 	// A delta for a subscription this model no longer holds: the window was
 	// replaced (a chat switch) and the reply raced the unsubscribe. Dropping it
@@ -41,16 +44,36 @@ func (m RootModel) handleChatListDelta(d *project.ChatListDelta) (RootModel, tea
 		if m.folderBar == nil {
 			break
 		}
+		cmd := m.setFolders(d.Folders.Filters)
 		m.folderBar.SetUnreadCounts(d.Folders.Unread)
 		m.folderBar.SetArchivePresent(d.Folders.ArchivePresent)
 		// The Archive folder was showing and just became empty (the last archived
 		// chat was unarchived): fall back to All Chats so the user is not
 		// stranded on an empty list.
 		if m.activeFolder == domainArchiveFolderID && !d.Folders.ArchivePresent {
-			return m.selectFolder(0)
+			next, selCmd := m.selectFolder(0)
+			return next, tea.Batch(cmd, selCmd)
 		}
+		return m, cmd
 	}
 	return m, nil
+}
+
+// setFolders puts the account's folders on the folder bar and lays the panes
+// out again, since a bar that gains or loses its folders changes the widths
+// around it. The folders travel with the chat list (#309).
+func (m *RootModel) setFolders(filters []domain.FolderFilter) tea.Cmd {
+	m.folderBar.SetFolders(filters)
+	if m.width > 0 && m.height > 0 {
+		lay := computeLayout(m.width, m.height, m.chat.ComposerHeight(),
+			m.folderBar.HasFolders())
+		if lay.hasFolders {
+			m.folderBar.SetSize(lay.folders.Width, lay.folders.Height)
+		}
+		m.chatList.SetSize(lay.chatList.Width, lay.chatList.Height)
+		m.chat.SetSize(lay.messages.Width, lay.messages.Height+lay.composer.Height)
+	}
+	return m.retransmitOnColsChange()
 }
 
 // handleIncoming follows the reorder: the row flashes so the eye can track a

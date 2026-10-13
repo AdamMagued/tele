@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/sorokin-vladimir/tele/internal/core"
-	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
 
 func nextAccountRoot() RootModel {
 	m := NewRootModel(false)
-	m.SetLoginModel(screens.NewLoginModel(internaltg.NewAuthFlow()))
+	m.SetLoginModel(screens.NewLoginModel())
 	return m
 }
 
@@ -49,7 +49,7 @@ func TestShell_TheNextLoginSaysWhyTheLastAccountEnded(t *testing.T) {
 		Ended: core.AccountEnded{Reason: core.EndLoggedOutElsewhere, Discarded: 3},
 	})
 
-	next, _ = next.Update(epochMsg{epoch: 2, msg: screens.AuthRequestMsg{Step: internaltg.AuthStepPhone}})
+	next, _ = next.Update(epochMsg{epoch: 2, msg: screens.AuthRequestMsg{Step: project.LoginPhone}})
 
 	view := xansi.Strip(next.View().Content)
 	assert.Contains(t, view, "This session was logged out.")

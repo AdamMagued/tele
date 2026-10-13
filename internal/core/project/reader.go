@@ -16,4 +16,7 @@ type Reader interface {
 	// store.Store because the queue is not part of the account cache: the
 	// composite reader in internal/core supplies it (#193).
 	Outbox(h domain.HistoryKey) []domain.OutboxEntry
+	// Account is where the account stands. It is not on store.Store either:
+	// the owner holds it, and none of it outlives the owner (#309).
+	Account() AccountContents
 }

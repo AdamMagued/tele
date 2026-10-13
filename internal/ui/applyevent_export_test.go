@@ -41,6 +41,8 @@ type testOwner struct {
 	// lastSub is the last subscription id handed out: ids are the client's to
 	// choose and are never reused (#309).
 	lastSub project.SubID
+	// accountSub is the client's account subscription.
+	accountSub project.SubID
 	// cmdErr is what every command answers with, standing in for a refusal.
 	cmdErr error
 	// knownUsers is what KnownUser answers from, fullUsers what GetUser
@@ -101,6 +103,8 @@ type storeReader struct{ store.Store }
 
 func (storeReader) Outbox(domain.HistoryKey) []domain.OutboxEntry { return nil }
 
+func (storeReader) Account() project.AccountContents { return project.AccountContents{} }
+
 func newTestOwner(st store.Store) *testOwner {
 	o := &testOwner{
 		state:       state.New(st),
@@ -126,6 +130,9 @@ func (o *testOwner) enqueue(d project.Delta) bool {
 func (o *testOwner) Subscribe(w project.Window) project.SubID {
 	o.lastSub++
 	o.reg.Subscribe(o.lastSub, w)
+	if _, ok := w.(project.AccountWindow); ok {
+		o.accountSub = o.lastSub
+	}
 	return o.lastSub
 }
 
@@ -134,6 +141,8 @@ func (o *testOwner) LogOutPreview() core.LogOutPreview { return core.LogOutPrevi
 func (o *testOwner) LogOut(context.Context, bool) error { return nil }
 
 func (o *testOwner) EndAccount(core.EndReason) {}
+
+func (o *testOwner) AnswerLogin(context.Context, int, string) error { return nil }
 
 func (o *testOwner) MoveWindow(id project.SubID, w project.Window) {
 	o.moves = append(o.moves, w)
@@ -590,6 +599,32 @@ func drainOwner(t testing.TB, m ui.RootModel) ui.RootModel {
 	}
 	drained, _ := o.drain(m)
 	return drained.(ui.RootModel)
+}
+
+// accountIs is the account projection saying c, the way the owner tells a
+// client where the account stands (#309). It is addressed to the model's
+// account subscription, which is id 0 on a model with no owner.
+func accountIs(m ui.RootModel, c project.AccountContents) tea.Msg {
+	sub := project.SubID(0)
+	if o, ok := m.Owner().(*testOwner); ok {
+		sub = o.accountSub
+	}
+	return project.Delta{Sub: sub, Account: &project.AccountDelta{Contents: c}}
+}
+
+// withFilters gives the account folders the way the owner does: they travel on
+// the chat list subscription (#309).
+func withFilters(t testing.TB, m ui.RootModel, filters []domain.FolderFilter) ui.RootModel {
+	t.Helper()
+	if o, ok := m.Owner().(*testOwner); ok {
+		o.state.Store().SetFolderFilters(filters)
+		o.reg.Refresh()
+		return drainOwner(t, m)
+	}
+	next, _ := m.Update(project.Delta{ChatList: &project.ChatListDelta{
+		Kind: project.ChatListFolders, Folders: project.FolderCounts{Filters: filters},
+	}})
+	return next.(ui.RootModel)
 }
 
 // toMain reaches the main screen, where the chat list first has a size and

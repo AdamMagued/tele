@@ -48,10 +48,11 @@ type Owner struct {
 	// out (#309).
 	clientsMu sync.Mutex
 	clients   map[clientID]*Attachment
-	// clockSkew carries the latest clock skew to the client (#277).
-	clockSkew *clockSkewOut
-	readyCh   chan struct{}
-	onAuthFn  func(userID int64, username string)
+	// acct is where the account stands: the login step, the connection, the
+	// clock (#309).
+	acct     accountState
+	readyCh  chan struct{}
+	onAuthFn func(userID int64, username string)
 	// selfName is the logged-in user's username, once known: a log out names
 	// whose account it ends (#297).
 	selfName atomic.Pointer[string]
@@ -123,7 +124,6 @@ func New(cfg *config.Config, log *zap.Logger, st *state.State, client Connection
 		notifier:      n,
 		authFlow:      internaltg.NewAuthFlow(),
 		clients:       make(map[clientID]*Attachment),
-		clockSkew:     newClockSkewOut(),
 		readyCh:       make(chan struct{}),
 		endRequests:   make(chan EndReason, 1),
 		fetching:      make(map[subKey]bool),
@@ -181,12 +181,6 @@ func (o *Owner) Config() *config.Config { return o.cfg.Load() }
 // SetConfig installs a reloaded config. One store at the root, the way a theme
 // is installed: no reader can see half of a change.
 func (o *Owner) SetConfig(cfg *config.Config) { o.cfg.Store(cfg) }
-
-// AuthFlow is the login conversation the client drives on the owner's behalf.
-func (o *Owner) AuthFlow() *internaltg.AuthFlow { return o.authFlow }
-
-// Ready is closed once the connection is up and authenticated.
-func (o *Owner) Ready() <-chan struct{} { return o.readyCh }
 
 // SetOnAuth registers a callback fired once the account is known, so a client
 // can record the self identity. Set before Start.

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
 )
@@ -24,6 +25,15 @@ type projectionReader struct {
 // projection outside the registry.
 func (o *Owner) reader() projectionReader {
 	return projectionReader{Store: o.state.Store(), owner: o}
+}
+
+// Account is where the account stands, or a fresh start for a reader with no
+// owner.
+func (r projectionReader) Account() project.AccountContents {
+	if r.owner == nil {
+		return project.AccountContents{}
+	}
+	return r.owner.Account()
 }
 
 // Outbox returns a history's queued sends, or nothing while no queue is set —

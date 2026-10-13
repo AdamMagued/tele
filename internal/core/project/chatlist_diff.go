@@ -1,5 +1,7 @@
 package project
 
+import "reflect"
+
 // ChatListDeltaKind names the three things that can happen to a chatlist
 // subscription. There is no "row moved": anything that moves a row is a Reset.
 type ChatListDeltaKind int
@@ -67,10 +69,14 @@ func sameRowIDs(a, b []ChatRow) bool {
 	return true
 }
 
-// sameFolderCounts treats a nil and an empty map as the same folder state, so a
-// subscription's first build does not report a spurious folder change.
+// sameFolderCounts treats a nil and an empty map or list as the same folder
+// state, so a subscription's first build does not report a spurious folder
+// change.
 func sameFolderCounts(a, b FolderCounts) bool {
 	if a.ArchivePresent != b.ArchivePresent || len(a.Unread) != len(b.Unread) {
+		return false
+	}
+	if len(a.Filters) != len(b.Filters) || (len(a.Filters) > 0 && !reflect.DeepEqual(a.Filters, b.Filters)) {
 		return false
 	}
 	for id, n := range a.Unread {

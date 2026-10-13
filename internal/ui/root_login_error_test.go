@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
-	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
@@ -69,7 +69,7 @@ func TestLogin_ABannedAccountIsNamedAsSuch(t *testing.T) {
 
 func TestLogin_ABannedNumberIsNamedAsSuch(t *testing.T) {
 	err := &telerr.Error{Kind: telerr.AccountBanned, Op: "auth.sendCode", Detail: "PHONE_NUMBER_BANNED"}
-	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: internaltg.AuthStepPhone})
+	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: project.LoginPhone})
 
 	view := withLoginStep(t, m, ui.ConnectFailedMsg{Err: err}).View().Content
 

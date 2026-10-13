@@ -1151,16 +1151,15 @@ func TestRoot_FolderSelectedMsg_FiltersChatList(t *testing.T) {
 
 	m = toMain(t, m)
 
-	// The owner stores the filters and then tells the client about them; the
-	// core resolves a folder id against the stored set when it windows the list.
+	// The owner stores the filters and they reach the client with the chat
+	// list; the core resolves a folder id against the stored set when it
+	// windows the list.
 	filter := domain.FolderFilter{ID: 1, Title: "Contacts", Contacts: true}
-	st.SetFolderFilters([]domain.FolderFilter{filter})
-	newM, _ := m.Update(ui.FolderFiltersMsg{Filters: []domain.FolderFilter{filter}})
-	m = newM.(ui.RootModel)
+	m = withFilters(t, m, []domain.FolderFilter{filter})
 
 	// Selecting a folder repoints the window; the core does the filtering.
 	selectedFilter := filter
-	newM, _ = m.Update(screens.FolderSelectedMsg{Filter: &selectedFilter})
+	newM, _ := m.Update(screens.FolderSelectedMsg{Filter: &selectedFilter})
 	root := drainOwner(t, newM.(ui.RootModel))
 
 	w, ok := root.Owner().(*testOwner).lastChatListWindow()
@@ -1172,21 +1171,29 @@ func TestRoot_FolderSelectedMsg_FiltersChatList(t *testing.T) {
 	assert.Equal(t, int64(1), chats[0].ID)
 }
 
-func TestRoot_FolderFiltersMsg_SetsFolders(t *testing.T) {
+func TestRoot_FoldersOnTheChatListSetTheFolderBar(t *testing.T) {
 	m := ui.NewRootModel(false)
 	m = m.WithScreen(ui.ScreenMain)
-	filters := []domain.FolderFilter{{ID: 1, Title: "Work"}}
-	newM, _ := m.Update(ui.FolderFiltersMsg{Filters: filters})
-	root := newM.(ui.RootModel)
+	root := withFilters(t, m, []domain.FolderFilter{{ID: 1, Title: "Work"}})
 	assert.True(t, root.HasFolders())
+}
+
+// The folders reach a client with the chat list, so one that subscribes after
+// they were loaded still has them (#309).
+func TestRoot_FoldersArriveWithTheChatList(t *testing.T) {
+	st := store.NewMemory()
+	st.SetFolderFilters([]domain.FolderFilter{{ID: 1, Title: "Work"}})
+	m := newRoot(st, 50, false)
+
+	m = toMain(t, m)
+
+	assert.True(t, m.HasFolders())
 }
 
 func TestRoot_0_FocusesFolders(t *testing.T) {
 	m := ui.NewRootModel(false)
 	m = m.WithScreen(ui.ScreenMain)
-	filters := []domain.FolderFilter{{ID: 1, Title: "Work"}}
-	m2, _ := m.Update(ui.FolderFiltersMsg{Filters: filters})
-	root := m2.(ui.RootModel)
+	root := withFilters(t, m, []domain.FolderFilter{{ID: 1, Title: "Work"}})
 	newM, _ := root.Update(tea.KeyPressMsg{Code: '0', Text: "0"})
 	root2 := newM.(ui.RootModel)
 	assert.Equal(t, ui.FocusFolders, root2.CurrentFocus())
@@ -1215,11 +1222,10 @@ func TestRoot_FolderSelectedMsg_FocusesChatList(t *testing.T) {
 	st := store.NewMemory()
 	m := newRoot(st, 50, false)
 	m = m.WithScreen(ui.ScreenMain)
-	filters := []domain.FolderFilter{{ID: 1, Title: "Work"}}
-	newM, _ := m.Update(ui.FolderFiltersMsg{Filters: filters})
-	m = newM.(ui.RootModel)
+	m = toMain(t, m)
+	m = withFilters(t, m, []domain.FolderFilter{{ID: 1, Title: "Work"}})
 
-	newM, _ = m.Update(tea.KeyPressMsg{Code: '0', Text: "0"})
+	newM, _ := m.Update(tea.KeyPressMsg{Code: '0', Text: "0"})
 	m = newM.(ui.RootModel)
 	require.Equal(t, ui.FocusFolders, m.CurrentFocus())
 

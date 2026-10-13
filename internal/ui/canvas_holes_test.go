@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
@@ -225,7 +226,7 @@ func TestCanvas_ClockSkewInTheStatusBarHasNoHoles(t *testing.T) {
 	paintedSlots(t)
 
 	m := newPopulatedRoot(t, 120, 40)
-	next, _ := m.Update(core.ClockSkew{Skew: 8 * time.Minute})
+	next, _ := m.Update(accountIs(m, project.AccountContents{Phase: project.AccountReady, ClockSkew: 8 * time.Minute}))
 	m = next.(ui.RootModel)
 
 	found := holes(m.View().Content, 120, 40)
@@ -316,12 +317,11 @@ func focusChat(t testing.TB, m ui.RootModel) ui.RootModel {
 // panes with the folder bar on the left.
 func withFolders(t testing.TB, m ui.RootModel) ui.RootModel {
 	t.Helper()
-	next, _ := m.Update(ui.FolderFiltersMsg{Filters: []domain.FolderFilter{
+	return withFilters(t, m, []domain.FolderFilter{
 		{ID: 0, Title: "All Chats"},
 		{ID: 2, Title: "Work"},
 		{ID: 3, Title: "Personal"},
-	}})
-	return next.(ui.RootModel)
+	})
 }
 
 // The login screen is almost entirely whitespace around a centred block, which
@@ -344,7 +344,7 @@ func TestCanvas_LoginStatesHaveNoHoles(t *testing.T) {
 
 	states := map[string]tea.Msg{
 		"still connecting": screens.SlowConnectMsg{},
-		"clock skew":       core.ClockSkew{Skew: 8 * time.Minute},
+		"clock skew":       accountIs(ui.NewRootModel(false), project.AccountContents{ClockSkew: 8 * time.Minute}),
 		"error": ui.ConnectFailedMsg{Err: &telerr.Error{
 			Kind: telerr.Network, Op: "dial", Detail: "connection refused",
 		}},
