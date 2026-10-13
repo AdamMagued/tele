@@ -78,6 +78,9 @@ func (m RootModel) updateUIMsg(msg tea.Msg) (RootModel, tea.Cmd) {
 				avatarCmd = m.transmitAvatarCmd(m.profile.Avatar())
 			}
 		}
+		if m.confirmQuit != nil {
+			m.confirmQuit.SetSize(msg.Width, msg.Height)
+		}
 		return m, tea.Batch(avatarCmd, m.retransmitOnColsChange())
 
 	case retransmitTickMsg:
@@ -110,6 +113,11 @@ func (m RootModel) updateUIMsg(msg tea.Msg) (RootModel, tea.Cmd) {
 		if msg.Filter != nil {
 			folder = msg.Filter.ID
 		}
+		// Picking a folder, even the one already shown, is leaving the forum:
+		// the person asked to see that folder's chats (#307). Not done in
+		// selectFolder, whose automatic fallback from an emptied Archive must
+		// not pull anyone out of the forum they are reading.
+		m = m.leaveForum()
 		m, _ = m.selectFolder(folder)
 		result, cmd := m.focusPane(FocusChatList)
 		return result.(RootModel), cmd

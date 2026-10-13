@@ -132,9 +132,27 @@ func (ml *MessageList) cursorTopRow() int {
 // to an older message: while the cursor is still in the lower half it simply
 // rises within the viewport (no scroll); once it would cross above the middle
 // the viewport scrolls up to hold it there. This avoids a teleport/jump when the
-// cursor was sitting at the bottom edge (e.g. right after a line scroll).
+// cursor was sitting at the bottom edge (e.g. right after a line scroll). A
+// bubble taller than half the viewport would be cut off below the middle, so
+// it is scrolled into view whole instead; one taller than the viewport has its
+// top put at the top of the viewport, so it reads from its first line (#306).
 func (ml *MessageList) revealCursorUp() {
-	if ml.viewHeight <= 0 {
+	idx := ml.cursorIndex()
+	if idx < 0 || ml.viewHeight <= 0 {
+		return
+	}
+	h := ml.itemHeight(idx)
+	if h > ml.viewHeight {
+		ml.viewStart, ml.lineOffset = ml.clampToBounds(idx, 0)
+		return
+	}
+	if h > ml.viewHeight/2 {
+		// Stepping up, the bubble ends where the previous cursor, which was on
+		// screen, begins: with its top on screen it is whole already, and with
+		// its top above the viewport bringing that top to the edge shows it whole.
+		if ml.cursorTopRow() < 0 {
+			ml.viewStart, ml.lineOffset = ml.clampToBounds(idx, 0)
+		}
 		return
 	}
 	if ml.cursorTopRow() < ml.viewHeight/2 {
@@ -144,14 +162,20 @@ func (ml *MessageList) revealCursorUp() {
 
 // revealCursorDown keeps the cursor on screen after stepping to a newer message:
 // it descends within the viewport until it reaches the bottom, then the viewport
-// scrolls down just enough to keep the cursor fully visible.
+// scrolls down just enough to keep the cursor fully visible. A bubble taller
+// than the viewport can never be fully visible, so its top goes to the top of
+// the viewport and the rest is read by scrolling (#306).
 func (ml *MessageList) revealCursorDown() {
 	idx := ml.cursorIndex()
 	if idx < 0 || ml.viewHeight <= 0 {
 		return
 	}
 	h := ml.itemHeight(idx)
-	for i := 0; i <= ml.viewHeight && ml.cursorTopRow()+h > ml.viewHeight; i++ {
+	if h > ml.viewHeight {
+		ml.viewStart, ml.lineOffset = ml.clampToBounds(idx, 0)
+		return
+	}
+	for ml.cursorTopRow()+h > ml.viewHeight {
 		before := ml.viewStart
 		beforeOff := ml.lineOffset
 		ml.scrollDownLine()

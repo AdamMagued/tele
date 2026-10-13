@@ -106,6 +106,24 @@ func TestLogOut_ConfirmedTellsTelegram(t *testing.T) {
 
 // Telegram out of reach leaves the session in the person's devices list, so
 // that is said, and logging out here anyway is theirs to choose.
+// Yes is the key under y on whatever layout is on, as every other key in tele
+// is: on a Russian layout that is н, at both questions.
+func TestLogOut_ConfirmedOnAnyLayout(t *testing.T) {
+	m, o := logOutModel(t, 0)
+	o.logOutErrs = []error{errors.New("connection refused")}
+	m = openLogOut(t, m)
+
+	m, cmd, _ := m.handleLogOutKey(tea.KeyPressMsg{Code: 'н', Text: "н"})
+	require.NotNil(t, cmd, "н did not confirm the log out")
+	m, _ = m.handleLogOutDone(cmd().(logOutDoneMsg))
+	require.Contains(t, screenText(m), "Log out here anyway?")
+
+	m, cmd, _ = m.handleLogOutKey(tea.KeyPressMsg{Code: 'н', Text: "н"})
+	require.NotNil(t, cmd, "н did not confirm a log out here only")
+	_, _ = m.handleLogOutDone(cmd().(logOutDoneMsg))
+	assert.Equal(t, []bool{true, false}, o.loggedOut)
+}
+
 func TestLogOut_TelegramOutOfReachAsksAgain(t *testing.T) {
 	m, o := logOutModel(t, 0)
 	o.logOutErrs = []error{errors.New("connection refused")}

@@ -266,10 +266,7 @@ func TestSettingsEdit_TheCursorStopsOnSettingsAndKeybindings(t *testing.T) {
 	assert.Equal(t, "API ID", m.CursorLabelForTest(), "it starts on the first setting")
 
 	seen := map[string]bool{}
-	for range 120 {
-		seen[m.CursorLabelForTest()] = true
-		m, _ = press(m, key('j'))
-	}
+	m = holdUntilStill(t, m, key('j'), func(label string) { seen[label] = true })
 
 	assert.True(t, seen["Avatar cache size"], "it reaches the last setting")
 	assert.True(t, seen["quit"], "it steps into keybindings past the last setting")
@@ -288,10 +285,28 @@ func TestSettingsEdit_TheCursorStopsOnSettingsAndKeybindings(t *testing.T) {
 	assert.Equal(t, last, m.CursorLabelForTest(), "holding j stops at the last keybinding")
 
 	// Moving back up returns to the first setting.
-	for range 120 {
-		m, _ = press(m, key('k'))
-	}
+	m = holdUntilStill(t, m, key('k'), func(string) {})
 	assert.Equal(t, "API ID", m.CursorLabelForTest(), "it navigates back to the top")
+}
+
+// holdUntilStill presses msg until the cursor stops moving, calling visit with the
+// label of every row it stops on, the first one included. It goes by what is on
+// screen rather than a fixed count, so a new setting or binding does not leave
+// it short of the end; two neighbouring rows may share a label, which is why the
+// rendered rows and not the label tell whether the cursor moved.
+func holdUntilStill(t *testing.T, m *components.SettingsModal, msg tea.KeyPressMsg, visit func(label string)) *components.SettingsModal {
+	t.Helper()
+	const limit = 1000 // a guard against a cursor that never settles
+	for range limit {
+		visit(m.CursorLabelForTest())
+		before := strings.Join(m.LinesForTest(), "\n")
+		m, _ = press(m, msg)
+		if strings.Join(m.LinesForTest(), "\n") == before {
+			return m
+		}
+	}
+	t.Fatalf("the cursor was still moving after %d presses", limit)
+	return m
 }
 
 // Keybinding rows are read-only: pressing enter or reset names the file where they are changed.
