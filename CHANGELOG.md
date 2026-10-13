@@ -11,6 +11,8 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+## [1.11.13] - 2026-10-13
+
 ### Fixed
 
 - Long key bindings in the shortcuts overlay (`?`) are shown in full, such as
