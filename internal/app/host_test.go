@@ -125,21 +125,35 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 }
 
 // waitForEnd waits for the client to hear that an account ended, and then for
-// the next one to be open in its place.
+// the next one to be open in its place. Whatever the host could not do on the
+// way - remove the account, open the next - fails the test with what it said,
+// rather than with a timeout that says nothing.
 func waitForEnd(t *testing.T, a *App, ended *account) core.AccountEnded {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	var news core.AccountEnded
 	for heard := false; !heard; {
 		select {
 		case msg := <-a.client.Stream():
+			if failed, ok := msg.(core.HostFailure); ok {
+				require.FailNow(t, "the host failed before the account ended", "%v", failed.Err)
+			}
 			news, heard = msg.(core.AccountEnded)
 		case <-deadline:
 			require.FailNow(t, "the account never ended")
 		}
 	}
-	require.Eventually(t, func() bool { return a.current() != ended }, 3*time.Second, 5*time.Millisecond,
-		"the next account never opened")
+	for a.current() == ended {
+		select {
+		case msg := <-a.client.Stream():
+			if failed, ok := msg.(core.HostFailure); ok {
+				require.FailNow(t, "the next account was not opened", "%v", failed.Err)
+			}
+		case <-deadline:
+			require.FailNow(t, "the next account never opened")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	return news
 }
 
