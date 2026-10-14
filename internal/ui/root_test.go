@@ -210,7 +210,7 @@ func TestRoot_ChatOpenFailure_ClearsSpinnerAndShowsError(t *testing.T) {
 
 	// The client cannot see whether filling the window touched the network, so
 	// the owner has to say when it could not: otherwise the pane waits forever.
-	newM, _ = m.Update(core.Failure{ChatID: chat.ID, Op: "load history", Err: errors.New("timeout")})
+	newM, _ = m.Update(core.Failure{ChatID: chat.ID, Op: "load history", Err: telerr.From(errors.New("timeout"))})
 	m = newM.(ui.RootModel)
 
 	assert.Contains(t, m.View().Content, "timeout")

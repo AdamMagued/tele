@@ -159,6 +159,35 @@ func As(err error) (*Error, bool) {
 	return nil, false
 }
 
+// From returns err as a domain error: err itself when it is one, and otherwise
+// an Internal error that says what err says. It is how an error leaves the
+// owner when it has to cross to a client as a value - one that is not a domain
+// error has no shape to cross in (#309). Nil stays nil.
+func From(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	if e, ok := As(err); ok {
+		return e
+	}
+	return &Error{Kind: Internal, Detail: err.Error(), Cause: err}
+}
+
+// Unnamed reports whether err names nothing beyond its own text, and returns
+// that text: it is no domain error, or it is the Internal error From made of
+// one, which carries no operation. Such an error has nothing to name but what
+// it says, so whoever shows it says that once.
+func Unnamed(err error) (string, bool) {
+	e, ok := As(err)
+	if !ok {
+		return err.Error(), true
+	}
+	if e.Kind == Internal && e.Op == "" {
+		return e.Detail, true
+	}
+	return "", false
+}
+
 // Of reports the kind of err, walking the wrap chain. A nil error has no kind;
 // anything unrecognised is Internal.
 func Of(err error) Kind {

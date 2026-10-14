@@ -1,0 +1,80 @@
+package wire
+
+import (
+	"golang.org/x/mod/semver"
+)
+
+// ProtocolVersion is the shape of what this binary says on the wire. It goes up
+// with any change the other side could misread. Two binaries with the same one
+// understand each other, whatever their own versions.
+const ProtocolVersion = 1
+
+// MethodHello is the first thing a client says, and the host's answer is its
+// own. Nothing else is said before it.
+const MethodHello = "$hello"
+
+// Hello is what each side says of itself when a connection opens.
+type Hello struct {
+	// Protocol is the side's ProtocolVersion.
+	Protocol int `json:"protocol"`
+	// Binary is the version of the binary, "dev" for one built locally.
+	Binary string `json:"binary"`
+	// Config is the config file the side reads. A client whose file is not
+	// the host's shows the host's settings read-only, naming the file that
+	// holds them, rather than letting a change be written where it never
+	// takes hold.
+	Config string `json:"config"`
+	// Service is set by a host the service manager keeps running, which a
+	// newer client may ask to restart; a host a terminal keeps running is
+	// somebody's session and is never restarted from outside.
+	Service bool `json:"service,omitempty"`
+}
+
+// Verdict is what a client does about the host it reached.
+type Verdict int
+
+const (
+	// Proceed: the two understand each other.
+	Proceed Verdict = iota + 1
+	// RestartHost: the host is a service running an older binary. The client
+	// asks it to restart, and the service manager starts it on the new one.
+	RestartHost
+	// RestartClient: the host is a service running a newer binary than this
+	// client. The client says tele was updated and stops; it never asks a
+	// newer host to go back.
+	RestartClient
+	// Refuse: the two do not understand each other, and the host is someone's
+	// session, which is not to be ended from outside.
+	Refuse
+)
+
+// Decide says what a client with client's hello does about a host that
+// answered with host's. A service follows its newer side, whichever it is: an
+// upgrade restarts the service lazily, on the first newer client, and an old
+// client left open across the upgrade must not take the service back. A host a
+// terminal keeps running is used while the two understand each other and
+// refused once they do not. Versions that cannot be ordered - a local build -
+// leave only the protocol to decide.
+func Decide(client, host Hello) Verdict {
+	order, ordered := compareBinaries(client.Binary, host.Binary)
+	if host.Service && ordered && order != 0 {
+		if order > 0 {
+			return RestartHost
+		}
+		return RestartClient
+	}
+	if client.Protocol == host.Protocol {
+		return Proceed
+	}
+	return Refuse
+}
+
+// compareBinaries orders two release versions, such as "2.0.0-beta.1" and
+// "2.0.0". It reports false when either is not one.
+func compareBinaries(a, b string) (int, bool) {
+	va, vb := "v"+a, "v"+b
+	if !semver.IsValid(va) || !semver.IsValid(vb) {
+		return 0, false
+	}
+	return semver.Compare(va, vb), true
+}

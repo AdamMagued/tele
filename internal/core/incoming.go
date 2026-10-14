@@ -7,6 +7,7 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
 // Incoming reports that something arrived in a chat the client is not showing:
@@ -27,10 +28,12 @@ type Incoming struct {
 // so a silent failure would leave a spinner running forever.
 //
 // Err carries the domain error kind from #191; the client decides how to say it.
+// It is a domain error and nothing else, since it is a value that crosses to a
+// client (#309).
 type Failure struct {
 	ChatID int64
 	Op     string
-	Err    error
+	Err    *telerr.Error
 }
 
 // OpSend names a send the queue gave up on. Clients single it out: a refused

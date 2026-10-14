@@ -134,11 +134,11 @@ func (m RootModel) handleConnectFailed(err error) (RootModel, tea.Cmd) {
 	// An error with a kind has a phrase for it, and its own text goes underneath
 	// as the evidence. One without a kind has nothing to name beyond that text,
 	// so the cause stays plain and the text is said once.
-	cause := text
-	if _, typed := telerr.As(err); !typed {
-		cause = connectFailedAction + "."
+	cause, evidence := text, err.Error()
+	if said, unnamed := telerr.Unnamed(err); unnamed {
+		cause, evidence = connectFailedAction+".", said
 	}
-	return m.routeLoginError(m.loginErrorText(cause, err.Error()))
+	return m.routeLoginError(m.loginErrorText(cause, evidence))
 }
 
 // handleBannedKey takes Enter on a ban's screen: the person leaves the banned

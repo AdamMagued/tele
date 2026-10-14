@@ -121,7 +121,7 @@ func (o *Owner) recordFailure(e domain.OutboxEntry, err error) {
 			zap.String("ref", e.Ref), zap.String("kind", string(e.ErrKind)))
 		// Said once, when it happens. The bubble keeps only a glyph; the reason
 		// is repeated by the client when the cursor rests on the entry (#193).
-		o.publishFailure(Failure{ChatID: e.ChatID, Op: OpSend, Err: err})
+		o.publishFailure(Failure{ChatID: e.ChatID, Op: OpSend, Err: telerr.From(err)})
 	} else {
 		e.State = domain.OutboxQueued
 		e.NextAttemptAt = time.Now().Add(delay)

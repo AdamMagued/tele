@@ -8,6 +8,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
 // fill brings a chat window up to date from Telegram, in the order the two
@@ -65,7 +66,7 @@ func (o *Owner) backfill(ctx context.Context, a *seat, w project.HistoryWindow) 
 		o.log.Warn("history backfill failed", zap.Int64("chat", w.ChatID), zap.Error(err))
 		// The client asked for a window it cannot fill itself, so it has to be
 		// told: otherwise the pane waits on a load that will never arrive.
-		a.tell(Failure{ChatID: w.ChatID, Op: "load history", Err: err})
+		a.tell(Failure{ChatID: w.ChatID, Op: "load history", Err: telerr.From(err)})
 		return
 	}
 	// The store merges under its own lock, so a message that arrives mid-fetch

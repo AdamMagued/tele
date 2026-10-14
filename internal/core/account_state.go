@@ -123,7 +123,7 @@ func (o *Owner) connectionEnded(ctx context.Context, err error) {
 	if _, loggedOut := EndReasonOf(err); loggedOut {
 		return
 	}
-	o.updateAccount(func(c *project.AccountContents) { c.Ended = err })
+	o.updateAccount(func(c *project.AccountContents) { c.Ended = telerr.From(err) })
 }
 
 func loginStepKind(s internaltg.AuthStep) project.LoginStepKind {

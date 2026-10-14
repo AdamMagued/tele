@@ -13,6 +13,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
 // recv reads the next T from a client's stream, passing over whatever else
@@ -256,7 +257,7 @@ func TestAttachment_AGivenUpSendReachesEveryClient(t *testing.T) {
 	o, _, _ := newTestOwner(t)
 	a, b := attach(o), attach(o)
 
-	o.publishFailure(Failure{ChatID: 1, Op: OpSend, Err: errors.New("refused")})
+	o.publishFailure(Failure{ChatID: 1, Op: OpSend, Err: telerr.From(errors.New("refused"))})
 
 	for _, c := range []*Attachment{a, b} {
 		f, ok := recv[Failure](t, c)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
 // The account is told whole on subscribing, even when nothing has happened
@@ -44,18 +45,21 @@ func TestRegistry_AnAccountSaysWhatChangedWhole(t *testing.T) {
 	assert.Equal(t, r.account, got[0].Account.Contents)
 }
 
-// Errors are told apart by what they say: two errors with the same text are
-// the same end to whoever reads it, and a new value of it is not news.
+// An end is told apart by what a client is told of it: a new value saying the
+// same, with another cause behind it, is not news.
 func TestRegistry_AnAccountsEndIsComparedByWhatItSays(t *testing.T) {
-	r := &fakeReader{account: project.AccountContents{Ended: errors.New("refused")}}
+	r := &fakeReader{account: project.AccountContents{Ended: &telerr.Error{Kind: telerr.Network, Detail: "refused", Cause: errors.New("a")}}}
 	g, rec := newRegistry(r)
 	subscribe(g, project.AccountWindow{})
 	rec.take()
 
-	r.account = project.AccountContents{Ended: errors.New("refused")}
+	r.account = project.AccountContents{Ended: &telerr.Error{Kind: telerr.Network, Detail: "refused", Cause: errors.New("b")}}
 	g.Refresh()
-
 	assert.Empty(t, rec.take())
+
+	r.account = project.AccountContents{Ended: &telerr.Error{Kind: telerr.Network, Detail: "reset"}}
+	g.Refresh()
+	assert.Len(t, rec.take(), 1, "a different end is news")
 }
 
 // An account the client did not take is told again whole on the next rebuild:
