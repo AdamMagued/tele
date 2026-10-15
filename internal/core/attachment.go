@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -54,7 +55,7 @@ type Attachment struct {
 // NewAttachment makes an attachment that is not seated at any owner yet.
 func NewAttachment() *Attachment {
 	return &Attachment{
-		stream:      make(chan any, streamSize),
+		stream:      make(chan any, StreamSize),
 		endRequests: make(chan EndReason, 1),
 		done:        make(chan struct{}),
 		pending:     make(map[project.SubID]project.Window),
@@ -192,10 +193,33 @@ func do(a *Attachment, ctx context.Context, fn func(context.Context, *seat) erro
 
 // Subscribe registers a window under the next id of this client's and returns
 // it. It does not wait for the owner: the subscription's first delta is its
-// answer. Over a socket the client side chooses the id the same way. Made
-// between owners, it waits for the next one.
+// answer. Over a connection the client side chooses the id the same way, and
+// SubscribeAs takes it. Made between owners, it waits for the next one.
 func (a *Attachment) Subscribe(w project.Window) project.SubID {
 	id := project.SubID(a.nextSub.Add(1))
+	a.subscribe(id, w)
+	return id
+}
+
+// SubscribeAs registers a window under an id the client chose: over a
+// connection the client side hands the ids out, and this side holds it to
+// them. An id must be past every one before it, or a delta of a subscription
+// already replaced could be read as the new one's.
+func (a *Attachment) SubscribeAs(id project.SubID, w project.Window) error {
+	for {
+		last := a.nextSub.Load()
+		if uint64(id) <= last {
+			return fmt.Errorf("subscription %d is not past %d", id, last)
+		}
+		if a.nextSub.CompareAndSwap(last, uint64(id)) {
+			break
+		}
+	}
+	a.subscribe(id, w)
+	return nil
+}
+
+func (a *Attachment) subscribe(id project.SubID, w project.Window) {
 	a.mu.Lock()
 	s := a.seat
 	if s == nil {
@@ -205,7 +229,6 @@ func (a *Attachment) Subscribe(w project.Window) project.SubID {
 	if s != nil {
 		s.subscribe(id, w)
 	}
-	return id
 }
 
 // MoveWindow repositions a subscription.

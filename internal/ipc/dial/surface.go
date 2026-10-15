@@ -6,15 +6,23 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
+	"github.com/sorokin-vladimir/tele/internal/ipc/protocol"
 )
 
 // The surface, one call each. What each one means is said on core.Surface.
 
-func (a *Attachment) Subscribe(project.Window) project.SubID   { panic(errNotYet) }
-func (a *Attachment) MoveWindow(project.SubID, project.Window) { panic(errNotYet) }
-func (a *Attachment) Unsubscribe(project.SubID)                { panic(errNotYet) }
-func (a *Attachment) EndAccount(reason core.EndReason)         { a.tell("EndAccount", reason) }
-func (a *Attachment) SetFocus(h domain.HistoryKey)             { a.tell("SetFocus", h) }
+// Subscribe chooses the subscription's id here, and the host takes it. Nothing
+// is waited for: the subscription's first delta is its answer.
+func (a *Attachment) Subscribe(w project.Window) project.SubID {
+	id := project.SubID(a.nextSub.Add(1))
+	a.tell(protocol.MethodSubscribe, id, w)
+	return id
+}
+
+func (a *Attachment) MoveWindow(id project.SubID, w project.Window) { a.tell("MoveWindow", id, w) }
+func (a *Attachment) Unsubscribe(id project.SubID)                  { a.tell("Unsubscribe", id) }
+func (a *Attachment) EndAccount(reason core.EndReason)              { a.tell("EndAccount", reason) }
+func (a *Attachment) SetFocus(h domain.HistoryKey)                  { a.tell("SetFocus", h) }
 func (a *Attachment) InvalidateAvatar(userID, avatarID int64) {
 	a.tell("InvalidateAvatar", userID, avatarID)
 }

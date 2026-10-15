@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 )
 
@@ -35,6 +36,12 @@ type Call struct {
 // Calls is every method of the surface, by name.
 var Calls = calls()
 
+// MethodSubscribe crosses in a shape of its own: the client chooses the
+// subscription's id, so the id goes with the window, and nothing comes back -
+// the subscription's first delta is its answer. The host takes it as
+// SubscribeAs.
+const MethodSubscribe = "Subscribe"
+
 func calls() map[string]Call {
 	ctxType := reflect.TypeFor[context.Context]()
 	errType := reflect.TypeFor[error]()
@@ -61,18 +68,59 @@ func calls() map[string]Call {
 			mustCross(m.Name, o)
 			c.out = append(c.out, o)
 		}
+		if m.Name == MethodSubscribe {
+			c.in = append([]reflect.Type{reflect.TypeFor[project.SubID]()}, c.in...)
+			c.out, c.Answers = nil, false
+		}
 		all[m.Name] = c
 	}
 	return all
 }
 
-// mustCross refuses a type no connection can carry. The surface is put
+// mustCross refuses a type no connection can carry: a channel, a function, or
+// an interface with no family to name its members. The surface is put
 // together once, so one that has such a method is a bug, and panics.
 func mustCross(method string, t reflect.Type) {
 	switch t.Kind() {
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		panic(fmt.Sprintf("protocol: %s takes or answers %v, which cannot cross a connection", method, t))
+	case reflect.Interface:
+		if _, ok := families[t]; !ok {
+			panic(fmt.Sprintf("protocol: %s takes or answers %v, which has no family to cross in", method, t))
+		}
 	}
+}
+
+// family is a registry of names seen through the interface it names: what a
+// call's argument of that interface type crosses with.
+type family interface {
+	encode(v any) (string, json.RawMessage, error)
+	decode(name string, raw json.RawMessage) (any, error)
+}
+
+type kindsOf[T any] struct{ k *wire.Kinds[T] }
+
+func (f kindsOf[T]) encode(v any) (string, json.RawMessage, error) {
+	t, ok := v.(T)
+	if !ok {
+		return "", nil, fmt.Errorf("protocol: %T is not a %v", v, reflect.TypeFor[T]())
+	}
+	return f.k.Encode(t)
+}
+
+func (f kindsOf[T]) decode(name string, raw json.RawMessage) (any, error) {
+	return f.k.Decode(name, raw)
+}
+
+// families are the interfaces a call may take, each with its registry.
+var families = map[reflect.Type]family{
+	reflect.TypeFor[project.Window](): kindsOf[project.Window]{Windows},
+}
+
+// named is a member of a family as it crosses: its name, and itself.
+type named struct {
+	Kind  string          `json:"kind"`
+	Value json.RawMessage `json:"value"`
 }
 
 // Params encodes args, the arguments a call is made with, without its context.
@@ -80,10 +128,20 @@ func (c Call) Params(args ...any) (json.RawMessage, error) {
 	if len(args) != len(c.in) {
 		return nil, fmt.Errorf("protocol: %s takes %d arguments, not %d", c.Name, len(c.in), len(args))
 	}
-	if args == nil {
-		args = []any{}
+	out := make([]any, len(args))
+	for i, arg := range args {
+		out[i] = arg
+		f, ok := families[c.in[i]]
+		if !ok {
+			continue
+		}
+		name, raw, err := f.encode(arg)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = named{Kind: name, Value: raw}
 	}
-	return json.Marshal(args)
+	return json.Marshal(out)
 }
 
 // Args decodes params into the arguments the method is called with, without
@@ -101,6 +159,20 @@ func (c Call) Args(params json.RawMessage) ([]reflect.Value, error) {
 	}
 	args := make([]reflect.Value, len(c.in))
 	for i, t := range c.in {
+		if f, ok := families[t]; ok {
+			var n named
+			if err := strictUnmarshal(raws[i], &n); err != nil {
+				return nil, fmt.Errorf("%w: %s argument %d: %v", wire.ErrProtocol, c.Name, i, err)
+			}
+			v, err := f.decode(n.Kind, n.Value)
+			if err != nil {
+				return nil, err
+			}
+			p := reflect.New(t).Elem()
+			p.Set(reflect.ValueOf(v))
+			args[i] = p
+			continue
+		}
 		p := reflect.New(t)
 		if err := strictUnmarshal(raws[i], p.Interface()); err != nil {
 			return nil, fmt.Errorf("%w: %s argument %d: %v", wire.ErrProtocol, c.Name, i, err)
@@ -117,7 +189,9 @@ func (c Call) Invoke(ctx context.Context, s core.Surface, args []reflect.Value) 
 	if c.Context {
 		in = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
 	}
-	outs := reflect.ValueOf(s).Method(c.method.Index).Call(in)
+	// Seen through the surface, so the method's index is the surface's and not
+	// that of whatever type is behind it.
+	outs := reflect.ValueOf(&s).Elem().Method(c.method.Index).Call(in)
 	if len(outs) > len(c.out) {
 		last := outs[len(outs)-1]
 		outs = outs[:len(outs)-1]
@@ -144,11 +218,7 @@ func (c Call) Result(outs []reflect.Value) (json.RawMessage, error) {
 		}
 		v = all
 	}
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	return StripAddresses(raw)
+	return encodeStripped(v)
 }
 
 // Decode reads a result into dsts, one pointer for each value the method

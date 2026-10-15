@@ -1,11 +1,11 @@
 // Package dial is the client's end of an attachment over a connection: the
-// surface a client holds, made of calls to a host on the other side. A client
-// cannot tell it from an attachment in its own process (#209).
+// surface a client holds, made of calls to a host on the other side, and the
+// stream the host tells it on. A client cannot tell it from an attachment in
+// its own process (#209).
 package dial
 
 import (
 	"context"
-	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -20,8 +20,17 @@ import (
 type Attachment struct {
 	conn io.ReadWriteCloser
 	enc  *wire.Encoder
-	// nextID is the last request id used. Ids only grow.
-	nextID atomic.Uint64
+	// nextID is the last request id used, nextSub the last subscription id.
+	// Both only grow, and both are this side's to choose.
+	nextID  atomic.Uint64
+	nextSub atomic.Uint64
+
+	// stream carries deltas and events to the client, in the order the host
+	// sent them. It holds as much as the host's side of an attachment does.
+	stream chan any
+	// closed is closed when the client closes the attachment.
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	mu sync.Mutex
 	// waiting holds the calls whose answer is still to come, by request id.
@@ -38,6 +47,8 @@ func New(conn io.ReadWriteCloser) *Attachment {
 	a := &Attachment{
 		conn:    conn,
 		enc:     wire.NewEncoder(conn),
+		stream:  make(chan any, core.StreamSize),
+		closed:  make(chan struct{}),
 		waiting: map[uint64]chan wire.Frame{},
 		lost:    make(chan struct{}),
 	}
@@ -45,8 +56,16 @@ func New(conn io.ReadWriteCloser) *Attachment {
 	return a
 }
 
+// Stream is everything the host tells this client, deltas and events alike,
+// in the order it told them: the same values an attachment in the host's own
+// process carries.
+func (a *Attachment) Stream() <-chan any { return a.stream }
+
 // Close ends the attachment: the client is gone.
-func (a *Attachment) Close() error { return a.conn.Close() }
+func (a *Attachment) Close() error {
+	a.closeOnce.Do(func() { close(a.closed) })
+	return a.conn.Close()
+}
 
 // hostLost is what a call answers when the connection ended: the host may be
 // back, and the account it served may be too.
@@ -54,21 +73,25 @@ func hostLost() error {
 	return &telerr.Error{Kind: telerr.Network, Op: "host", Transient: true}
 }
 
-// read hands every answer to the call waiting for it, until the connection
-// ends.
+// read takes the host's frames off the connection until it ends: answers go
+// to the calls waiting for them, deltas and events onto the stream. A client
+// that is not draining its stream holds this up, and the host with it, as it
+// would hold up an attachment in the host's own process.
 func (a *Attachment) read(dec *wire.Decoder) {
+	defer func() {
+		a.mu.Lock()
+		a.lostErr = hostLost()
+		close(a.lost)
+		a.mu.Unlock()
+	}()
 	for {
 		f, err := dec.Decode()
 		if err != nil {
-			a.mu.Lock()
-			a.lostErr = hostLost()
-			close(a.lost)
-			a.mu.Unlock()
 			return
 		}
 		shape, err := f.Shape()
 		if err != nil {
-			continue
+			return
 		}
 		switch shape {
 		case wire.ShapeReply, wire.ShapeError:
@@ -79,13 +102,25 @@ func (a *Attachment) read(dec *wire.Decoder) {
 			if ok {
 				ch <- f
 			}
+		case wire.ShapeDelta, wire.ShapeEvent:
+			v, err := protocol.Unframe(f)
+			if err != nil {
+				return
+			}
+			select {
+			case a.stream <- v:
+			case <-a.closed:
+				return
+			}
+		default:
+			return
 		}
 	}
 }
 
 // call makes method with args and waits for its answer, which it decodes into
-// dsts. A call whose ctx ends first answers with that, and its answer is
-// dropped when it comes.
+// dsts. A call whose ctx ends first is called off on the host and answers with
+// ctx's error; its answer, if one comes, is dropped.
 func (a *Attachment) call(ctx context.Context, method string, args []any, dsts ...any) error {
 	c := protocol.Calls[method]
 	params, err := c.Params(args...)
@@ -123,6 +158,7 @@ func (a *Attachment) call(ctx context.Context, method string, args []any, dsts .
 		}
 		return c.Decode(f.Result, dsts...)
 	case <-ctx.Done():
+		_ = a.enc.Encode(wire.Cancel(id))
 		return ctx.Err()
 	case <-a.lost:
 		return a.lostErr
@@ -158,6 +194,3 @@ func ask2[T, U any](a *Attachment, ctx context.Context, method string, args ...a
 	err := a.call(ctx, method, args, &v, &u)
 	return v, u, err
 }
-
-// errNotYet is a call this end cannot make yet.
-var errNotYet = errors.New("dial: subscriptions do not cross yet")

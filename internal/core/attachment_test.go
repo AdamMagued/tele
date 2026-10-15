@@ -148,6 +148,18 @@ func TestAttachment_SubscriptionIDsAreNeverReused(t *testing.T) {
 	assert.NotEqual(t, first, second)
 }
 
+// Over a connection the client chooses its ids, and they only grow: an id not
+// past the last one could be read as a subscription it already replaced.
+func TestAttachment_AnIDChosenByTheClientOnlyGrows(t *testing.T) {
+	a := NewAttachment()
+
+	require.NoError(t, a.SubscribeAs(5, project.ChatListWindow{Limit: 10}))
+	assert.Error(t, a.SubscribeAs(5, project.ChatListWindow{Limit: 10}), "the same id")
+	assert.Error(t, a.SubscribeAs(3, project.ChatListWindow{Limit: 10}), "an earlier id")
+	assert.Equal(t, project.SubID(6), a.Subscribe(project.ChatListWindow{Limit: 10}),
+		"ids chosen here go on from the ones chosen there")
+}
+
 // A client that stopped draining loses its own deltas and nobody else's, and
 // is resynced on its own once it drains again.
 func TestAttachment_AStalledClientDoesNotStarveAnother(t *testing.T) {

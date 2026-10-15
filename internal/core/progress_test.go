@@ -30,5 +30,5 @@ func TestPublishProgress_DropsWhenNobodyIsDraining(t *testing.T) {
 		o.publishProgress(Progress{ChatID: 1, Ref: "r1#0", Done: int64(i)})
 	}
 
-	assert.Len(t, queued(c), streamSize, "the stream should still hold what it could")
+	assert.Len(t, queued(c), StreamSize, "the stream should still hold what it could")
 }

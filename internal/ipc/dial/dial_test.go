@@ -21,7 +21,7 @@ import (
 )
 
 // connect is an attachment over a connection whose other end serves s.
-func connect(t *testing.T, s core.Surface) *dial.Attachment {
+func connect(t *testing.T, s serve.Attachment) *dial.Attachment {
 	t.Helper()
 	client, host := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -39,7 +39,8 @@ func connect(t *testing.T, s core.Surface) *dial.Attachment {
 	return a
 }
 
-// The subscriptions cross with the stream they feed, not here.
+// The subscriptions take a window, which no filler can choose: they have tests
+// of their own.
 var notYet = map[string]bool{"Subscribe": true, "MoveWindow": true, "Unsubscribe": true}
 
 // Every call a client may make reaches the surface on the other side with the

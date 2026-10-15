@@ -9,6 +9,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
+	"github.com/sorokin-vladimir/tele/internal/ipc/serve"
 )
 
 // received is one call as the serving side's surface saw it.
@@ -25,6 +26,9 @@ type recorder struct {
 	results map[string][]any
 	errs    map[string]error
 	calls   chan received
+	// block holds the calls named in it until their context ends.
+	block  map[string]bool
+	stream chan any
 }
 
 func newRecorder() *recorder {
@@ -32,6 +36,28 @@ func newRecorder() *recorder {
 		results: map[string][]any{},
 		errs:    map[string]error{},
 		calls:   make(chan received, 16),
+		block:   map[string]bool{},
+		stream:  make(chan any, core.StreamSize),
+	}
+}
+
+var _ serve.Attachment = (*recorder)(nil)
+
+func (r *recorder) SubscribeAs(id project.SubID, w project.Window) error {
+	return r.took("SubscribeAs", id, w)
+}
+func (r *recorder) Stream() <-chan any { return r.stream }
+func (r *recorder) Detach()            { _ = r.took("Detach") }
+
+// held waits, for a method the test blocked, until ctx ends, and tells the
+// test that it did.
+func (r *recorder) held(ctx context.Context, method string) {
+	r.mu.Lock()
+	block := r.block[method]
+	r.mu.Unlock()
+	if block {
+		<-ctx.Done()
+		r.calls <- received{method: method + " ended", args: []any{ctx.Err()}}
 	}
 }
 
@@ -165,8 +191,9 @@ func (r *recorder) GetUser(_ context.Context, userID int64) (domain.User, error)
 	err := r.took("GetUser", userID)
 	return result[domain.User](r, "GetUser", 0), err
 }
-func (r *recorder) FetchMedia(_ context.Context, chatID int64, msgID int, slot domain.MediaSlot) (string, error) {
+func (r *recorder) FetchMedia(ctx context.Context, chatID int64, msgID int, slot domain.MediaSlot) (string, error) {
 	err := r.took("FetchMedia", chatID, msgID, slot)
+	r.held(ctx, "FetchMedia")
 	return result[string](r, "FetchMedia", 0), err
 }
 func (r *recorder) SaveMedia(_ context.Context, chatID int64, msgID int, slot domain.MediaSlot, destDir, ref string) (string, error) {

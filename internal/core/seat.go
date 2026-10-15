@@ -10,10 +10,11 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/domain"
 )
 
-// streamSize bounds what one client may fall behind by before it starts losing
+// StreamSize bounds what one client may fall behind by before it starts losing
 // things. Deltas and events share it: one stream keeps them in the order they
-// happened.
-const streamSize = 512
+// happened. The client's end of a connection holds as much, so a client falls
+// behind by the same amount whichever side of a connection it is on.
+const StreamSize = 512
 
 // seat is an attachment's place at one owner: the subscriptions made through
 // it, the focus it reports and the way to the client's stream. An attachment
