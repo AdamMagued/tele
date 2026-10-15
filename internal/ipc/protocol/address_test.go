@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/ipc/protocol"
-	"github.com/sorokin-vladimir/tele/internal/ui"
 )
 
 // addressFields are the fields an address is kept under, as the protocol
@@ -41,7 +41,7 @@ func TestStripAddresses_NothingSentCarriesAnAddress(t *testing.T) {
 	roots := []reflect.Type{reflect.TypeFor[project.Delta]()}
 	roots = append(roots, protocol.Windows.Members()...)
 	roots = append(roots, protocol.Events.Members()...)
-	owner := reflect.TypeFor[ui.Owner]()
+	owner := reflect.TypeFor[core.Surface]()
 	for i := range owner.NumMethod() {
 		m := owner.Method(i).Type
 		for j := range m.NumOut() {
