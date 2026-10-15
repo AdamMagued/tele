@@ -171,6 +171,11 @@ func TestAttachment_AStalledClientDoesNotStarveAnother(t *testing.T) {
 	require.True(t, ok, "the live client is not held back by the stalled one")
 	assert.Equal(t, project.ChatListRow, d.ChatList.Kind)
 
+	// The owner hands the change to one client after the other, so hearing it
+	// on the live one does not mean the stalled one was offered it yet. Drained
+	// before that, it would take the delta like any other client.
+	require.Eventually(t, func() bool { return stalled.current().resyncArmed.Load() },
+		2*time.Second, time.Millisecond, "the stalled client's delta is dropped")
 	for len(stalled.stream) > 0 {
 		<-stalled.stream
 	}
