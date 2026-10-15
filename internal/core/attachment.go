@@ -115,9 +115,10 @@ func (a *Attachment) unseat() {
 
 // HostFailure is something the host itself could not do, said to the client
 // because nobody else is there to say it to: an account that ended and could
-// not be removed, a next one that could not be opened.
+// not be removed, a next one that could not be opened. Err is a domain error,
+// since it is a value that crosses to a client.
 type HostFailure struct {
-	Err error
+	Err *telerr.Error
 }
 
 // Tell tells the client something from the host. Unlike the owner's events it

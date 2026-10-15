@@ -3,7 +3,9 @@ package wire
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 )
 
 // Kinds names the members of one family of values that share a place on the
@@ -68,4 +70,10 @@ func (k *Kinds[T]) Decode(name string, raw json.RawMessage) (T, error) {
 		return zero, protocolError("%q is not a member of this family", name)
 	}
 	return v, nil
+}
+
+// Members lists the types the family has names for, in no particular order:
+// what a test holds against what the code declares.
+func (k *Kinds[T]) Members() []reflect.Type {
+	return slices.Collect(maps.Keys(k.byType))
 }

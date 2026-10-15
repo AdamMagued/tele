@@ -33,7 +33,7 @@ func sizedLoginRoot(t *testing.T) ui.RootModel {
 func TestLogin_ConnectFailureShowsCauseLogAndQuit(t *testing.T) {
 	err := &telerr.Error{Kind: telerr.Network, Op: "dial", Detail: "connection refused"}
 
-	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: err}).View().Content
+	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: telerr.From(err)}).View().Content
 
 	assert.Contains(t, view, "Could not connect to Telegram: no connection")
 	assert.Contains(t, view, err.Error())
@@ -47,7 +47,7 @@ func TestLogin_ConnectFailureShowsCauseLogAndQuit(t *testing.T) {
 func TestLogin_ConnectFailureWithoutKindKeepsItsText(t *testing.T) {
 	err := errors.New("dial tcp 149.154.167.50:443: connect: connection refused")
 
-	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: err}).View().Content
+	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: telerr.From(err)}).View().Content
 
 	assert.Contains(t, view, "Could not connect to Telegram")
 	assert.Contains(t, view, "connection refused")
@@ -60,7 +60,7 @@ func TestLogin_ConnectFailureWithoutKindKeepsItsText(t *testing.T) {
 func TestLogin_ABannedAccountIsNamedAsSuch(t *testing.T) {
 	err := &telerr.Error{Kind: telerr.AccountBanned, Op: "users.getUsers", Detail: "USER_DEACTIVATED_BAN"}
 
-	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: err}).View().Content
+	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: telerr.From(err)}).View().Content
 
 	assert.Contains(t, view, "This Telegram account is banned.")
 	assert.Contains(t, view, "Logging in again with this number will not help.")
@@ -72,7 +72,7 @@ func TestLogin_ABannedNumberIsNamedAsSuch(t *testing.T) {
 	err := &telerr.Error{Kind: telerr.AccountBanned, Op: "auth.sendCode", Detail: "PHONE_NUMBER_BANNED"}
 	m := withLoginStep(t, sizedLoginRoot(t), screens.AuthRequestMsg{Step: project.LoginPhone})
 
-	view := withLoginStep(t, m, core.HostFailure{Err: err}).View().Content
+	view := withLoginStep(t, m, core.HostFailure{Err: telerr.From(err)}).View().Content
 
 	assert.Contains(t, view, "This phone number is banned by Telegram.")
 	assert.NotContains(t, view, "Could not connect")
@@ -82,7 +82,7 @@ func TestLogin_ABannedNumberIsNamedAsSuch(t *testing.T) {
 func TestLogin_CancelledConnectShowsNothing(t *testing.T) {
 	err := fmt.Errorf("run: %w", context.Canceled)
 
-	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: err}).View().Content
+	view := withLoginStep(t, sizedLoginRoot(t), core.HostFailure{Err: telerr.From(err)}).View().Content
 
 	assert.Contains(t, view, "connecting...")
 }
@@ -109,7 +109,7 @@ func TestLogin_QuitHintFollowsTheKeyMap(t *testing.T) {
 	require.Empty(t, warns)
 	m := sizedLoginRoot(t).WithKeyMap(km)
 
-	view := withLoginStep(t, m, core.HostFailure{Err: errors.New("boom")}).View().Content
+	view := withLoginStep(t, m, core.HostFailure{Err: telerr.From(errors.New("boom"))}).View().Content
 
 	assert.Contains(t, view, "alt+x to quit")
 }

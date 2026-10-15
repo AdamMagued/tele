@@ -10,6 +10,20 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
+// Event is something that happened, told to the clients attached when it
+// happened: everything on an attachment's stream that is not a delta. The set
+// is closed, so a connection can name every member of it (#209).
+type Event interface{ isEvent() }
+
+func (Incoming) isEvent()         {}
+func (Failure) isEvent()          {}
+func (Typing) isEvent()           {}
+func (Progress) isEvent()         {}
+func (DownloadProgress) isEvent() {}
+func (Notification) isEvent()     {}
+func (AccountEnded) isEvent()     {}
+func (HostFailure) isEvent()      {}
+
 // Incoming reports that something arrived in a chat the client is not showing:
 // enough for the row to flash and follow the reorder (#39). It is an event, not
 // state, which is why it does not ride on a projection — a chat-list row says

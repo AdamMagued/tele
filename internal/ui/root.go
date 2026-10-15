@@ -600,6 +600,9 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case core.HostFailure:
 		// What the host could not do lands where a connection that ended
 		// does: on the login screen, or in a toast that stays (#309).
+		if msg.Err == nil {
+			return m, nil
+		}
 		return m.handleConnectFailed(msg.Err)
 	case screens.LoginAnswerMsg:
 		return m.handleLoginAnswer(msg)

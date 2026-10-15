@@ -12,6 +12,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/accountstate"
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/notices"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
@@ -224,7 +225,7 @@ func (a *App) endAccount(ctx context.Context, acct *account, reason core.EndReas
 
 	if err := accountstate.End(acct.startup.stateDir, acct.startup.sessionFile); err != nil {
 		a.log.Error("the account that ended could not be removed", zap.Error(err))
-		a.client.Tell(core.HostFailure{Err: fmt.Errorf("the account that ended could not be removed: %w", err)})
+		a.client.Tell(core.HostFailure{Err: telerr.From(fmt.Errorf("the account that ended could not be removed: %w", err))})
 		return
 	}
 	if acct.tmpDir != "" {
@@ -240,7 +241,7 @@ func (a *App) endAccount(ctx context.Context, acct *account, reason core.EndReas
 	next, err := a.openNext()
 	if err != nil {
 		a.log.Error("the next account could not be opened", zap.Error(err))
-		a.client.Tell(core.HostFailure{Err: err})
+		a.client.Tell(core.HostFailure{Err: telerr.From(err)})
 		return
 	}
 	a.launch(ctx, next)
