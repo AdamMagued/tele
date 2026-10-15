@@ -12,6 +12,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
+	"github.com/sorokin-vladimir/tele/internal/ipc/ipctest"
 	"github.com/sorokin-vladimir/tele/internal/ipc/protocol"
 )
 
@@ -67,7 +68,7 @@ func TestStripAddresses_NothingSentCarriesAnAddress(t *testing.T) {
 		})
 
 		v := reflect.New(root).Elem()
-		fill(v, 0)
+		ipctest.Fill(v)
 		raw, err := json.Marshal(v.Interface())
 		require.NoError(t, err, root)
 		stripped, err := protocol.StripAddresses(raw)
@@ -108,53 +109,6 @@ func walkFields(t reflect.Type, seen map[reflect.Type]bool, visit func(reflect.T
 			}
 			visit(t, f)
 			walkFields(f.Type, seen, visit)
-		}
-	}
-}
-
-// fill sets every settable value under v to something non-zero, so that an
-// address field nobody strips shows up in what is encoded. Interfaces stay
-// nil: none of them is encoded with an address under it.
-func fill(v reflect.Value, depth int) {
-	if depth > 8 {
-		return
-	}
-	switch v.Kind() {
-	case reflect.Bool:
-		v.SetBool(true)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		v.SetInt(1)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		v.SetUint(1)
-	case reflect.Float32, reflect.Float64:
-		v.SetFloat(1)
-	case reflect.String:
-		v.SetString("x")
-	case reflect.Pointer:
-		p := reflect.New(v.Type().Elem())
-		fill(p.Elem(), depth+1)
-		v.Set(p)
-	case reflect.Slice:
-		s := reflect.MakeSlice(v.Type(), 1, 1)
-		fill(s.Index(0), depth+1)
-		v.Set(s)
-	case reflect.Array:
-		for i := range v.Len() {
-			fill(v.Index(i), depth+1)
-		}
-	case reflect.Map:
-		m := reflect.MakeMap(v.Type())
-		k := reflect.New(v.Type().Key()).Elem()
-		e := reflect.New(v.Type().Elem()).Elem()
-		fill(k, depth+1)
-		fill(e, depth+1)
-		m.SetMapIndex(k, e)
-		v.Set(m)
-	case reflect.Struct:
-		for i := range v.NumField() {
-			if f := v.Field(i); f.CanSet() {
-				fill(f, depth+1)
-			}
 		}
 	}
 }

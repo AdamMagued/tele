@@ -1,0 +1,148 @@
+package dial
+
+import (
+	"context"
+
+	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/domain"
+)
+
+// The surface, one call each. What each one means is said on core.Surface.
+
+func (a *Attachment) Subscribe(project.Window) project.SubID   { panic(errNotYet) }
+func (a *Attachment) MoveWindow(project.SubID, project.Window) { panic(errNotYet) }
+func (a *Attachment) Unsubscribe(project.SubID)                { panic(errNotYet) }
+func (a *Attachment) EndAccount(reason core.EndReason)         { a.tell("EndAccount", reason) }
+func (a *Attachment) SetFocus(h domain.HistoryKey)             { a.tell("SetFocus", h) }
+func (a *Attachment) InvalidateAvatar(userID, avatarID int64) {
+	a.tell("InvalidateAvatar", userID, avatarID)
+}
+func (a *Attachment) RetryOutbox(ref string) error {
+	return do(a, context.Background(), "RetryOutbox", ref)
+}
+func (a *Attachment) DiscardOutbox(ref string) error {
+	return do(a, context.Background(), "DiscardOutbox", ref)
+}
+func (a *Attachment) InvalidateMedia(chatID int64, msgID int, slot domain.MediaSlot) {
+	a.tell("InvalidateMedia", chatID, msgID, slot)
+}
+
+// LogOutPreview answers nothing when the host cannot be asked, as it does
+// between accounts.
+func (a *Attachment) LogOutPreview() core.LogOutPreview {
+	p, _ := ask[core.LogOutPreview](a, context.Background(), "LogOutPreview")
+	return p
+}
+
+func (a *Attachment) LogOut(ctx context.Context, tellTelegram bool) error {
+	return do(a, ctx, "LogOut", tellTelegram)
+}
+
+func (a *Attachment) AnswerLogin(ctx context.Context, seq int, value string) error {
+	return do(a, ctx, "AnswerLogin", seq, value)
+}
+
+func (a *Attachment) SetMuted(ctx context.Context, h domain.HistoryKey, muted bool) error {
+	return do(a, ctx, "SetMuted", h, muted)
+}
+
+func (a *Attachment) SetArchived(ctx context.Context, chatID int64, archived bool) error {
+	return do(a, ctx, "SetArchived", chatID, archived)
+}
+
+func (a *Attachment) SetUnreadMark(ctx context.Context, chatID int64, unread bool) error {
+	return do(a, ctx, "SetUnreadMark", chatID, unread)
+}
+
+func (a *Attachment) AddToFolder(ctx context.Context, filterID int, chatID int64, add bool) error {
+	return do(a, ctx, "AddToFolder", filterID, chatID, add)
+}
+
+func (a *Attachment) MarkRead(ctx context.Context, h domain.HistoryKey, maxID int) error {
+	return do(a, ctx, "MarkRead", h, maxID)
+}
+
+func (a *Attachment) ReadReactions(ctx context.Context, h domain.HistoryKey) error {
+	return do(a, ctx, "ReadReactions", h)
+}
+
+func (a *Attachment) ReadMentions(ctx context.Context, h domain.HistoryKey) error {
+	return do(a, ctx, "ReadMentions", h)
+}
+
+func (a *Attachment) EditMessage(ctx context.Context, chatID int64, msgID int, text string, entities []domain.MessageEntity) error {
+	return do(a, ctx, "EditMessage", chatID, msgID, text, entities)
+}
+
+func (a *Attachment) DeleteMessages(ctx context.Context, chatID int64, msgIDs []int, revoke bool) error {
+	return do(a, ctx, "DeleteMessages", chatID, msgIDs, revoke)
+}
+
+func (a *Attachment) SendReaction(ctx context.Context, chatID int64, msgID int, emoji string) (bool, error) {
+	return ask[bool](a, ctx, "SendReaction", chatID, msgID, emoji)
+}
+
+func (a *Attachment) Forward(ctx context.Context, fromChatID int64, target domain.HistoryKey, msgIDs []int, comment string) error {
+	return do(a, ctx, "Forward", fromChatID, target, msgIDs, comment)
+}
+
+func (a *Attachment) SetTyping(ctx context.Context, h domain.HistoryKey, action domain.TypingAction) error {
+	return do(a, ctx, "SetTyping", h, action)
+}
+
+func (a *Attachment) SaveDraft(ctx context.Context, h domain.HistoryKey, text string) error {
+	return do(a, ctx, "SaveDraft", h, text)
+}
+
+func (a *Attachment) Send(ctx context.Context, req core.SendRequest) error {
+	return do(a, ctx, "Send", req)
+}
+
+func (a *Attachment) SendMedia(ctx context.Context, req core.MediaSendRequest) error {
+	return do(a, ctx, "SendMedia", req)
+}
+
+func (a *Attachment) SearchContacts(ctx context.Context, q string, limit int) ([]project.ChatRow, error) {
+	return ask[[]project.ChatRow](a, ctx, "SearchContacts", q, limit)
+}
+
+func (a *Attachment) Chats(ctx context.Context) ([]project.ChatRow, error) {
+	return ask[[]project.ChatRow](a, ctx, "Chats")
+}
+
+func (a *Attachment) Topics(ctx context.Context, chatID int64) ([]project.TopicRow, error) {
+	return ask[[]project.TopicRow](a, ctx, "Topics", chatID)
+}
+
+func (a *Attachment) Chat(ctx context.Context, chatID int64) (project.ChatRow, bool, error) {
+	return ask2[project.ChatRow, bool](a, ctx, "Chat", chatID)
+}
+
+func (a *Attachment) FolderFilters(ctx context.Context) ([]domain.FolderFilter, error) {
+	return ask[[]domain.FolderFilter](a, ctx, "FolderFilters")
+}
+
+func (a *Attachment) GetParticipants(ctx context.Context, chatID int64) ([]domain.ChatMember, error) {
+	return ask[[]domain.ChatMember](a, ctx, "GetParticipants", chatID)
+}
+
+func (a *Attachment) KnownUser(ctx context.Context, userID int64) (domain.User, bool, error) {
+	return ask2[domain.User, bool](a, ctx, "KnownUser", userID)
+}
+
+func (a *Attachment) GetUser(ctx context.Context, userID int64) (domain.User, error) {
+	return ask[domain.User](a, ctx, "GetUser", userID)
+}
+
+func (a *Attachment) FetchMedia(ctx context.Context, chatID int64, msgID int, slot domain.MediaSlot) (string, error) {
+	return ask[string](a, ctx, "FetchMedia", chatID, msgID, slot)
+}
+
+func (a *Attachment) SaveMedia(ctx context.Context, chatID int64, msgID int, slot domain.MediaSlot, destDir, ref string) (string, error) {
+	return ask[string](a, ctx, "SaveMedia", chatID, msgID, slot, destDir, ref)
+}
+
+func (a *Attachment) FetchAvatar(ctx context.Context, userID, avatarID int64) (string, error) {
+	return ask[string](a, ctx, "FetchAvatar", userID, avatarID)
+}
