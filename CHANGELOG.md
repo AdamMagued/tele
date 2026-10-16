@@ -29,6 +29,10 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 - Logging out finishes any request still under way as cancelled, instead of
   letting it fail on whatever the log out closed under it. A request to end
   an account that has already ended no longer touches the next one (#309).
+- Groundwork for the next step: everything the interface asks of the account
+  and is told by it can now cross a local socket, after the two sides check
+  that they speak the same protocol. Nothing uses it yet, so nothing should
+  look different (#205, #206, #209).
 
 ## [1.11.13] - 2026-10-13
 
