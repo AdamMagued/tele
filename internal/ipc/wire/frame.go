@@ -122,17 +122,22 @@ func (f Frame) CancelledID() (uint64, error) {
 	return p.ID, nil
 }
 
+// The constructors take payloads already encoded. What a payload is, and how it
+// is encoded, is the caller's business; taking raw JSON rather than any value
+// is what keeps bytes from being mistaken for a payload and sent as a string.
+
 // Request is a call to method with params, under the caller's id.
-func Request(id uint64, method string, params any) (Frame, error) {
-	raw, err := encodeOptional(params)
-	return Frame{ID: id, Method: method, Params: raw}, err
+func Request(id uint64, method string, params json.RawMessage) Frame {
+	return Frame{ID: id, Method: method, Params: params}
 }
 
 // Reply answers request id with result. A call that answers with nothing
 // still answers: its result is null.
-func Reply(id uint64, result any) (Frame, error) {
-	raw, err := json.Marshal(result)
-	return Frame{ID: id, Result: raw}, err
+func Reply(id uint64, result json.RawMessage) Frame {
+	if result == nil {
+		result = json.RawMessage("null")
+	}
+	return Frame{ID: id, Result: result}
 }
 
 // Fail answers request id with err. Id 0 is an error about the connection.
@@ -145,26 +150,17 @@ func Fail(id uint64, err error) Frame {
 }
 
 // Delta carries one change to subscription sub.
-func Delta(sub uint64, delta any) (Frame, error) {
-	raw, err := json.Marshal(delta)
-	return Frame{Sub: sub, Delta: raw}, err
+func Delta(sub uint64, delta json.RawMessage) Frame {
+	return Frame{Sub: sub, Delta: delta}
 }
 
 // Event tells what happened, under its name.
-func Event(name string, params any) (Frame, error) {
-	raw, err := encodeOptional(params)
-	return Frame{Event: name, Params: raw}, err
+func Event(name string, params json.RawMessage) Frame {
+	return Frame{Event: name, Params: params}
 }
 
 // Cancel calls off request id.
 func Cancel(id uint64) Frame {
 	raw, _ := json.Marshal(cancelParams{ID: id})
 	return Frame{Method: MethodCancel, Params: raw}
-}
-
-func encodeOptional(v any) (json.RawMessage, error) {
-	if v == nil {
-		return nil, nil
-	}
-	return json.Marshal(v)
 }

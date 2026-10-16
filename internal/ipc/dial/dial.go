@@ -6,6 +6,9 @@ package dial
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -42,8 +45,37 @@ type Attachment struct {
 
 var _ core.Surface = (*Attachment)(nil)
 
-// New is an attachment over conn, which it owns from here.
-func New(conn io.ReadWriteCloser) *Attachment {
+// Mismatch is a host this client does not use as it is: what to do about it,
+// and what the host said of itself, such as the config file it reads.
+type Mismatch struct {
+	Verdict wire.Verdict
+	Host    wire.Hello
+}
+
+func (m *Mismatch) Error() string {
+	return fmt.Sprintf("the host runs %s on protocol %d, and this client cannot use it as it is (verdict %d)",
+		m.Host.Binary, m.Host.Protocol, m.Verdict)
+}
+
+// Dial attaches over conn, which it owns from here: it says hello, hears the
+// host's, and decides whether the two understand each other. A host it does
+// not use answers with a *Mismatch, and conn is closed.
+func Dial(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (*Attachment, error) {
+	// Hello is said before anything reads the connection, so its answer is
+	// read here; a ctx that ends first closes conn, which ends the wait.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	host, dec, err := greet(conn, hello)
+	if !stop() || err != nil {
+		_ = conn.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	if v := wire.Decide(hello, host); v != wire.Proceed {
+		_ = conn.Close()
+		return nil, &Mismatch{Verdict: v, Host: host}
+	}
 	a := &Attachment{
 		conn:    conn,
 		enc:     wire.NewEncoder(conn),
@@ -52,8 +84,41 @@ func New(conn io.ReadWriteCloser) *Attachment {
 		waiting: map[uint64]chan wire.Frame{},
 		lost:    make(chan struct{}),
 	}
-	go a.read(wire.NewDecoder(conn))
-	return a
+	a.nextID.Store(helloID)
+	go a.read(dec)
+	return a, nil
+}
+
+// helloID is the request id hello goes under: the first one.
+const helloID = 1
+
+func greet(conn io.ReadWriter, hello wire.Hello) (wire.Hello, *wire.Decoder, error) {
+	var host wire.Hello
+	raw, err := json.Marshal(hello)
+	if err != nil {
+		return host, nil, err
+	}
+	if err := wire.NewEncoder(conn).Encode(wire.Request(helloID, wire.MethodHello, raw)); err != nil {
+		return host, nil, hostLost()
+	}
+	dec := wire.NewDecoder(conn)
+	f, err := dec.Decode()
+	if err != nil {
+		if errors.Is(err, wire.ErrProtocol) {
+			return host, nil, protocol.Violation(err)
+		}
+		return host, nil, hostLost()
+	}
+	if f.Error != nil {
+		return host, nil, f.Error
+	}
+	if f.ID != helloID || f.Result == nil {
+		return host, nil, protocol.Violation(fmt.Errorf("%w: the host did not answer hello", wire.ErrProtocol))
+	}
+	if err := json.Unmarshal(f.Result, &host); err != nil {
+		return host, nil, protocol.Violation(fmt.Errorf("%w: hello: %v", wire.ErrProtocol, err))
+	}
+	return host, dec, nil
 }
 
 // Stream is everything the host tells this client, deltas and events alike,
@@ -69,7 +134,7 @@ func (a *Attachment) Close() error {
 
 // hostLost is what a call answers when the connection ended: the host may be
 // back, and the account it served may be too.
-func hostLost() error {
+func hostLost() *telerr.Error {
 	return &telerr.Error{Kind: telerr.Network, Op: "host", Transient: true}
 }
 
@@ -77,24 +142,47 @@ func hostLost() error {
 // to the calls waiting for them, deltas and events onto the stream. A client
 // that is not draining its stream holds this up, and the host with it, as it
 // would hold up an attachment in the host's own process.
+//
+// When it ends, every call waiting and every call after is answered with why,
+// and the stream ends, which is how its holder hears of it.
 func (a *Attachment) read(dec *wire.Decoder) {
-	defer func() {
-		a.mu.Lock()
-		a.lostErr = hostLost()
-		close(a.lost)
-		a.mu.Unlock()
-	}()
+	why, broke := a.readUntilEnd(dec)
+	a.mu.Lock()
+	a.lostErr = why
+	close(a.lost)
+	a.mu.Unlock()
+	close(a.stream)
+	if broke {
+		_ = a.enc.Encode(wire.Fail(0, why))
+	}
+	_ = a.conn.Close()
+}
+
+// readUntilEnd reads until the connection ends, and says why it did. broke
+// says the host broke the protocol, which it is told before the connection
+// goes.
+func (a *Attachment) readUntilEnd(dec *wire.Decoder) (why *telerr.Error, broke bool) {
 	for {
 		f, err := dec.Decode()
 		if err != nil {
-			return
+			if errors.Is(err, wire.ErrProtocol) {
+				return protocol.Violation(err), true
+			}
+			return hostLost(), false
 		}
 		shape, err := f.Shape()
 		if err != nil {
-			return
+			return protocol.Violation(err), true
 		}
 		switch shape {
-		case wire.ShapeReply, wire.ShapeError:
+		case wire.ShapeError:
+			if f.ID == 0 {
+				// The host says why it is going: that is the reason, not
+				// the connection ending after it.
+				return f.Error, false
+			}
+			fallthrough
+		case wire.ShapeReply:
 			a.mu.Lock()
 			ch, ok := a.waiting[f.ID]
 			delete(a.waiting, f.ID)
@@ -105,15 +193,15 @@ func (a *Attachment) read(dec *wire.Decoder) {
 		case wire.ShapeDelta, wire.ShapeEvent:
 			v, err := protocol.Unframe(f)
 			if err != nil {
-				return
+				return protocol.Violation(err), true
 			}
 			select {
 			case a.stream <- v:
 			case <-a.closed:
-				return
+				return hostLost(), false
 			}
 		default:
-			return
+			return protocol.Violation(fmt.Errorf("%w: a host does not send %v", wire.ErrProtocol, shape)), true
 		}
 	}
 }
@@ -144,11 +232,7 @@ func (a *Attachment) call(ctx context.Context, method string, args []any, dsts .
 		a.mu.Unlock()
 	}()
 
-	req, err := wire.Request(id, method, params)
-	if err != nil {
-		return err
-	}
-	if err := a.enc.Encode(req); err != nil {
+	if err := a.enc.Encode(wire.Request(id, method, params)); err != nil {
 		return hostLost()
 	}
 	select {
@@ -171,11 +255,7 @@ func (a *Attachment) tell(method string, args ...any) {
 	if err != nil {
 		return
 	}
-	req, err := wire.Request(a.nextID.Add(1), method, params)
-	if err != nil {
-		return
-	}
-	_ = a.enc.Encode(req)
+	_ = a.enc.Encode(wire.Request(a.nextID.Add(1), method, params))
 }
 
 func do(a *Attachment, ctx context.Context, method string, args ...any) error {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,23 +18,14 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
-// mustFrame takes a frame a constructor built from a value that always
-// encodes.
-func mustFrame(f wire.Frame, err error) wire.Frame {
-	if err != nil {
-		panic(err)
-	}
-	return f
-}
-
 // Every shape crosses and comes back as itself, under the keys a person reads.
 func TestFrame_EveryShapeRoundTrips(t *testing.T) {
 	frames := map[wire.Shape]wire.Frame{
-		wire.ShapeRequest: mustFrame(wire.Request(7, "Send", map[string]string{"ref": "c8f1"})),
-		wire.ShapeReply:   mustFrame(wire.Reply(7, nil)),
+		wire.ShapeRequest: wire.Request(7, "Send", json.RawMessage(`{"ref":"c8f1"}`)),
+		wire.ShapeReply:   wire.Reply(7, nil),
 		wire.ShapeError:   wire.Fail(7, &telerr.Error{Kind: telerr.RateLimited, RetryAfter: 32 * time.Second}),
-		wire.ShapeDelta:   mustFrame(wire.Delta(3, map[string]int{"n": 1})),
-		wire.ShapeEvent:   mustFrame(wire.Event("notification", map[string]string{"title": "Ada"})),
+		wire.ShapeDelta:   wire.Delta(3, json.RawMessage(`{"n":1}`)),
+		wire.ShapeEvent:   wire.Event("notification", json.RawMessage(`{"title":"Ada"}`)),
 		wire.ShapeCancel:  wire.Cancel(7),
 	}
 	for shape, f := range frames {
@@ -51,7 +43,7 @@ func TestFrame_EveryShapeRoundTrips(t *testing.T) {
 
 func TestFrame_KeysAreWholeWords(t *testing.T) {
 	var buf bytes.Buffer
-	f := mustFrame(wire.Request(7, "Send", map[string]string{"ref": "c8f1"}))
+	f := wire.Request(7, "Send", json.RawMessage(`{"ref":"c8f1"}`))
 	require.NoError(t, wire.NewEncoder(&buf).Encode(f))
 
 	assert.Equal(t, `{"id":7,"method":"Send","params":{"ref":"c8f1"}}`+"\n", buf.String())
@@ -60,7 +52,7 @@ func TestFrame_KeysAreWholeWords(t *testing.T) {
 // A call that answers with nothing still answers: its reply is not mistaken
 // for a line with no shape.
 func TestFrame_AnEmptyReplyIsAReply(t *testing.T) {
-	f := mustFrame(wire.Reply(9, nil))
+	f := wire.Reply(9, nil)
 	shape, err := f.Shape()
 	require.NoError(t, err)
 	assert.Equal(t, wire.ShapeReply, shape)
@@ -147,7 +139,7 @@ func TestEncoder_FramesFromSeveralWritersArriveWhole(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < each; i++ {
-				f, _ := wire.Delta(uint64(w+1), map[string]string{"pad": strings.Repeat("x", 300)})
+				f := wire.Delta(uint64(w+1), json.RawMessage(`{"pad":"`+strings.Repeat("x", 300)+`"}`))
 				assert.NoError(t, enc.Encode(f))
 			}
 		}()
@@ -175,7 +167,7 @@ func TestEncoder_KeepsOneWritersOrder(t *testing.T) {
 	var buf bytes.Buffer
 	enc := wire.NewEncoder(&buf)
 	for i := 1; i <= 50; i++ {
-		require.NoError(t, enc.Encode(mustFrame(wire.Delta(1, i))))
+		require.NoError(t, enc.Encode(wire.Delta(1, json.RawMessage(strconv.Itoa(i)))))
 	}
 
 	dec := wire.NewDecoder(&buf)

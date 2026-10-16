@@ -6,6 +6,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,13 +32,19 @@ type Attachment interface {
 
 var _ Attachment = (*core.Attachment)(nil)
 
-// Conn serves att over conn until the client goes, ctx ends, or the client
-// says something that is not the protocol. It owns conn from here and closes
-// it, and detaches att when it returns: the client is gone.
+// Conn serves att over conn until the client goes, ctx ends, or one side says
+// something that is not the protocol. It owns conn from here and closes it,
+// and detaches att when it returns: the client is gone.
+//
+// The client speaks first, with its hello, and is answered with host's.
+// Whether the two understand each other is the client's to decide: the host
+// serves whoever stays. A break of the protocol, by either side, is said to
+// the client before the connection goes, and returned.
 //
 // A call that takes a context runs beside the others and can be called off; one
 // that does not runs on the reading goroutine, in the order it was asked.
-func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment) error {
+func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment, host wire.Hello) error {
+	defer att.Detach()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	// Ending ctx closes conn, which is what frees a goroutine blocked on it.
@@ -45,26 +52,67 @@ func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment) error {
 	defer stop()
 
 	c := &served{att: att, enc: wire.NewEncoder(conn), calls: map[uint64]context.CancelFunc{}}
+	dec := wire.NewDecoder(conn)
+	if err := c.greet(dec, host); err != nil {
+		return c.end(err, conn)
+	}
+
 	// running is the calls still being made. Only the reading goroutine adds
 	// to it, so once that has returned it can be waited on.
 	var running sync.WaitGroup
 	pumped := make(chan error, 1)
 	go func() { pumped <- c.pump(ctx) }()
 	read := make(chan error, 1)
-	go func() { read <- c.read(ctx, wire.NewDecoder(conn), &running) }()
+	go func() { read <- c.read(ctx, dec, &running) }()
 
 	var err error
+	other := pumped
 	select {
 	case err = <-read:
-		cancel()
-		<-pumped
 	case err = <-pumped:
-		cancel()
-		<-read
+		other = read
+	}
+	err = c.end(err, conn)
+	cancel()
+	<-other
+	running.Wait()
+	return err
+}
+
+// greet takes the client's hello, which must come first, and answers it with
+// the host's.
+func (c *served) greet(dec *wire.Decoder, host wire.Hello) error {
+	f, err := dec.Decode()
+	if err != nil {
+		return err
+	}
+	if f.Method != wire.MethodHello {
+		return fmt.Errorf("%w: %q before hello", wire.ErrProtocol, f.Method)
+	}
+	if _, err := f.Shape(); err != nil {
+		return err
+	}
+	var client wire.Hello
+	if err := json.Unmarshal(f.Params, &client); err != nil {
+		return fmt.Errorf("%w: hello: %v", wire.ErrProtocol, err)
+	}
+	raw, err := json.Marshal(host)
+	if err != nil {
+		return err
+	}
+	return c.enc.Encode(wire.Reply(f.ID, raw))
+}
+
+// end closes the connection for err: a client that went is no error, and a
+// break of the protocol is said to the client first.
+func (c *served) end(err error, conn io.Closer) error {
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	if errors.Is(err, wire.ErrProtocol) {
+		_ = c.enc.Encode(wire.Fail(0, protocol.Violation(err)))
 	}
 	_ = conn.Close()
-	running.Wait()
-	att.Detach()
 	return err
 }
 
@@ -87,7 +135,9 @@ func (c *served) pump(ctx context.Context) error {
 		case v := <-c.att.Stream():
 			f, err := protocol.Frame(v)
 			if err != nil {
-				return &telerr.Error{Kind: telerr.Internal, Op: "stream", Detail: err.Error(), Cause: err}
+				// The host's own mistake, but the client is told it the same
+				// way: nothing it reads after this can be trusted.
+				return fmt.Errorf("%w: %v", wire.ErrProtocol, err)
 			}
 			if err := c.enc.Encode(f); err != nil {
 				return nil
@@ -101,7 +151,7 @@ func (c *served) read(ctx context.Context, dec *wire.Decoder, running *sync.Wait
 	for {
 		f, err := dec.Decode()
 		if err != nil {
-			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
 			return err
@@ -189,11 +239,7 @@ func (c *served) reply(id uint64, call protocol.Call, outs []reflect.Value) erro
 	if err != nil {
 		return c.fail(id, err)
 	}
-	f, err := wire.Reply(id, result)
-	if err != nil {
-		return c.fail(id, err)
-	}
-	_ = c.enc.Encode(f)
+	_ = c.enc.Encode(wire.Reply(id, result))
 	return nil
 }
 

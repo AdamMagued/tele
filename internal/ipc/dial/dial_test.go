@@ -17,8 +17,12 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
 	"github.com/sorokin-vladimir/tele/internal/ipc/ipctest"
 	"github.com/sorokin-vladimir/tele/internal/ipc/serve"
+	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
+
+// hello is what both ends say of themselves when they are the same build.
+var hello = wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev", Config: "/tmp/tele/config.yml"}
 
 // connect is an attachment over a connection whose other end serves s.
 func connect(t *testing.T, s serve.Attachment) *dial.Attachment {
@@ -28,9 +32,10 @@ func connect(t *testing.T, s serve.Attachment) *dial.Attachment {
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		_ = serve.Conn(ctx, host, s)
+		_ = serve.Conn(ctx, host, s, hello)
 	}()
-	a := dial.New(client)
+	a, err := dial.Dial(ctx, client, hello)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = a.Close()
 		cancel()
