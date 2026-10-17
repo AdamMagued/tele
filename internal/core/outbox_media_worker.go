@@ -132,7 +132,7 @@ func (o *Owner) sendGroup(ctx context.Context, e domain.OutboxEntry, peer domain
 	if len(uploaded) == 1 {
 		id, err := o.client.SendMedia(ctx, internaltg.SendMediaParams{
 			Peer: peer, Media: uploaded[0],
-			Caption: e.Media.Caption, Entities: e.Media.Entities,
+			Caption: e.Media.Caption, Entities: o.addressMentions(e.Media.Entities),
 			ReplyToMsgID: e.Media.ReplyToMsgID,
 			TopicID:      e.TopicID,
 			RandomID:     mediaRandomID(e.Ref, 0),
@@ -150,7 +150,7 @@ func (o *Owner) sendGroup(ctx context.Context, e domain.OutboxEntry, peer domain
 		// Telegram shows an album's caption from its first part.
 		if i == 0 {
 			item.Caption = e.Media.Caption
-			item.Entities = e.Media.Entities
+			item.Entities = o.addressMentions(e.Media.Entities)
 		}
 		items = append(items, item)
 		randomIDs = append(randomIDs, mediaRandomID(e.Ref, i))

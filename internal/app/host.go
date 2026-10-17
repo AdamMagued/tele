@@ -14,7 +14,6 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/notices"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui"
-	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
 
@@ -59,13 +58,13 @@ func (a *App) openNext() (*account, error) {
 		tmpDir:   tmpDir,
 		notifier: a.notifier,
 		connect:  a.connect,
-		// The account identity is needed both by the message list (own
-		// messages) and by the farewell banner on exit.
+		// The session identity is recorded once the login succeeds. The
+		// logged-in user reaches the model through the account projection;
+		// the farewell banner still reads it here.
 		onAuth: func(userID int64, username string) {
 			if err := accountstate.Record(a.startup.stateDir, a.startup.sessionFile); err != nil {
 				a.log.Error("record account identity", zap.Error(err))
 			}
-			components.SetSelfIdentity(userID, username)
 			a.setSelf(userID, username)
 		},
 	})

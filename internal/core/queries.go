@@ -72,7 +72,19 @@ func (o *Owner) GetParticipants(ctx context.Context, chatID int64) ([]domain.Cha
 	if err != nil {
 		return nil, err
 	}
-	return o.client.GetParticipants(ctx, peer)
+	members, err := o.client.GetParticipants(ctx, peer)
+	if err != nil {
+		return nil, err
+	}
+	// A member offered for a mention is named by id from here on, so the
+	// address the list came with is kept: it is the only one the owner may
+	// have for someone met in a group (#208).
+	for _, m := range members {
+		if m.AccessHash != 0 {
+			o.state.RememberAddress(domain.Peer{ID: m.UserID, Type: domain.PeerUser, AccessHash: m.AccessHash})
+		}
+	}
+	return members, nil
 }
 
 // KnownUser answers who a user is from what the owner already holds, with no

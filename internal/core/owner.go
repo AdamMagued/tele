@@ -185,6 +185,7 @@ func (o *Owner) SetOnAuth(fn func(userID int64, username string)) { o.onAuthFn =
 
 func (o *Owner) onAuth(userID int64, username string) {
 	o.selfName.Store(&username)
+	o.loggedIn(userID, username)
 	if o.onAuthFn != nil {
 		o.onAuthFn(userID, username)
 	}

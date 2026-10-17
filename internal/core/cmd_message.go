@@ -250,6 +250,7 @@ func (o *Owner) EditMessage(ctx context.Context, chatID int64, msgID int, text s
 	if err != nil {
 		return err
 	}
+	entities = o.addressMentions(entities)
 	edited := prev
 	edited.Text = text
 	edited.Entities = entities

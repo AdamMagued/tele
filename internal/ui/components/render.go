@@ -16,8 +16,9 @@ var (
 	selfMentionUser string // lowercase, without leading '@'
 )
 
-// SetSelfIdentity records the signed-in user so @me mentions can be highlighted
-// distinctly. Updated by the root model after auth. 256-color-safe styling.
+// SetSelfIdentity records the logged-in user so @me mentions can be highlighted
+// distinctly. Set by the root model from the account projection.
+// 256-color-safe styling.
 func SetSelfIdentity(userID int64, username string) {
 	selfMentionID = userID
 	selfMentionUser = strings.ToLower(username)

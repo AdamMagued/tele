@@ -6,8 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui"
+	"github.com/sorokin-vladimir/tele/internal/ui/components"
 )
 
 // A client that attaches while a step waits is asked it at once: the step is
@@ -60,6 +62,21 @@ func TestLogin_ALoginThatCannotGoOnIsSaid(t *testing.T) {
 	})).View().Content
 
 	assert.Contains(t, view, "Login requires email verification.")
+}
+
+// Mentions of the logged-in user are drawn as such from what the account says,
+// not from anything the host sets beside the endpoint (#208).
+func TestAccount_MentionsOfTheLoggedInUserStandOut(t *testing.T) {
+	defer components.SetSelfIdentity(0, "")
+	mention := []domain.MessageEntity{{Type: "mention", Offset: 0, Length: 4}}
+	m := sizedLoginRoot(t)
+
+	m = withLoginStep(t, m, accountIs(m, project.AccountContents{LoggedInUser: project.LoggedInUser{ID: 7, Username: "bob"}}))
+	other := components.RenderEntities("@ada hi", mention)
+	withLoginStep(t, m, accountIs(m, project.AccountContents{LoggedInUser: project.LoggedInUser{ID: 5, Username: "ada"}}))
+	self := components.RenderEntities("@ada hi", mention)
+
+	assert.NotEqual(t, other, self)
 }
 
 // A client attaching to an account already loaded goes straight to the main

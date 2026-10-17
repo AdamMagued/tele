@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
 
@@ -22,6 +23,9 @@ func (m RootModel) handleAccountDelta(next project.AccountContents) (RootModel, 
 		cmds = append(cmds, cmd)
 	}
 
+	if next.LoggedInUser != prev.LoggedInUser {
+		components.SetSelfIdentity(next.LoggedInUser.ID, next.LoggedInUser.Username)
+	}
 	if next.ClockSkew != prev.ClockSkew {
 		m = m.handleClockSkew(next.ClockSkew)
 	}

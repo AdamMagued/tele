@@ -171,6 +171,25 @@ func TestLogin_LoggedInLoadsTheAccount(t *testing.T) {
 	}, time.Second, 10*time.Millisecond, "the folders reach the chat list")
 }
 
+// Who the account is logged in as is part of the account, for a client
+// attached at any moment: it is told, never left to ask the host beside the
+// endpoint (#208).
+func TestLogin_TheLoggedInUserIsTheAccounts(t *testing.T) {
+	o, a := loginOwner(t, loginConn{})
+
+	o.onAuth(42, "ada")
+
+	got, ok := recvAccount(t, a)
+	require.True(t, ok)
+	assert.Equal(t, project.LoggedInUser{ID: 42, Username: "ada"}, got.LoggedInUser)
+
+	late := attach(o)
+	late.Subscribe(project.AccountWindow{})
+	first, ok := recvAccount(t, late)
+	require.True(t, ok)
+	assert.Equal(t, project.LoggedInUser{ID: 42, Username: "ada"}, first.LoggedInUser, "a client attaching later sees it too")
+}
+
 // The login follows the account and ends with it: a login nobody finished must
 // not hold the account's end up (#297).
 func TestLogin_EndsWithTheAccount(t *testing.T) {

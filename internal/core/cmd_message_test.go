@@ -12,8 +12,9 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
-func (s *stubClient) EditMessage(_ context.Context, _ domain.Peer, _ int, text string, _ []domain.MessageEntity) error {
+func (s *stubClient) EditMessage(_ context.Context, _ domain.Peer, _ int, text string, ents []domain.MessageEntity) error {
 	s.editedTo = text
+	s.sentEntities = ents
 	return s.err
 }
 
@@ -265,6 +266,7 @@ func (s *stubClient) SendMessage(_ context.Context, peer domain.Peer, text strin
 	s.sentTopic = topic
 	s.sentRandomID = randomID
 	s.sentPeer = peer
+	s.sentEntities = ents
 	block := s.sendBlock
 	sentID := s.sentID
 	// Every send creates a distinct message, as Telegram does. Reusing one id

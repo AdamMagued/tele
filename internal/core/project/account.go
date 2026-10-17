@@ -68,6 +68,15 @@ type AccountContents struct {
 	// ClockSkew is how far the local clock is from Telegram's, when it is far
 	// enough that messages between them are refused; zero otherwise (#277).
 	ClockSkew time.Duration
+	// LoggedInUser is who the account is logged in as, zero until Telegram
+	// has said (#208).
+	LoggedInUser LoggedInUser
+}
+
+// LoggedInUser is the user an account is logged in as.
+type LoggedInUser struct {
+	ID       int64
+	Username string
 }
 
 // AccountDelta carries the account whole: it is small, and a part of it
@@ -83,7 +92,8 @@ func BuildAccount(r Reader) AccountContents { return r.Account() }
 // compared by what a client is told of them, which leaves out the cause that
 // never crosses to one.
 func sameAccount(a, b AccountContents) bool {
-	if a.Phase != b.Phase || a.Login != b.Login || a.LoginFailed != b.LoginFailed || a.ClockSkew != b.ClockSkew {
+	if a.Phase != b.Phase || a.Login != b.Login || a.LoginFailed != b.LoginFailed || a.ClockSkew != b.ClockSkew ||
+		a.LoggedInUser != b.LoggedInUser {
 		return false
 	}
 	return sameError(a.Ended, b.Ended)

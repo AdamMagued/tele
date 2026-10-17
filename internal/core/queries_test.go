@@ -25,7 +25,7 @@ func (s *stubClient) GetParticipants(_ context.Context, _ domain.Peer) ([]domain
 	if s.err != nil {
 		return nil, s.err
 	}
-	return []domain.ChatMember{{UserID: 7, Username: "ada"}}, nil
+	return []domain.ChatMember{{UserID: 7, Username: "ada", AccessHash: 33}}, nil
 }
 
 func TestSearchContacts_ReturnsWhatTelegramFound(t *testing.T) {

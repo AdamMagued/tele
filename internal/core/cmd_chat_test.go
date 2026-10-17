@@ -57,6 +57,11 @@ type stubClient struct {
 	sentRandomID int64
 	sentPeer     domain.Peer
 	sentID       int
+	// sentEntities are the entities each kind of send last carried to
+	// Telegram: a text, a media caption, an album's first part.
+	sentEntities  []domain.MessageEntity
+	mediaEntities []domain.MessageEntity
+	albumEntities []domain.MessageEntity
 	// sentTopic, mediaTopic and albumTopic are the forum topic each kind of
 	// send was addressed to; forwardedTopic the topic a forward went into.
 	sentTopic      int
@@ -183,6 +188,7 @@ func (s *stubClient) SendMedia(_ context.Context, p internaltg.SendMediaParams) 
 	s.sentMediaN++
 	s.sentRandomID = p.RandomID
 	s.mediaTopic = p.TopicID
+	s.mediaEntities = p.Entities
 	if s.sendMediaErr != nil {
 		return 0, s.sendMediaErr
 	}
@@ -195,6 +201,9 @@ func (s *stubClient) SendAlbum(_ context.Context, p internaltg.SendAlbumParams) 
 	s.albumItems = len(p.Items)
 	s.albumTopic = p.TopicID
 	s.albumRandomIDs = append([]int64(nil), p.RandomIDs...)
+	if len(p.Items) > 0 {
+		s.albumEntities = p.Items[0].Entities
+	}
 	if s.sendMediaErr != nil {
 		return nil, s.sendMediaErr
 	}

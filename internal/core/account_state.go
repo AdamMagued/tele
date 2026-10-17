@@ -92,6 +92,14 @@ func (o *Owner) loadAccount(ctx context.Context) {
 	o.updateAccount(func(c *project.AccountContents) { c.Phase = project.AccountReady })
 }
 
+// loggedIn records who the account is logged in as, for every client watching
+// it.
+func (o *Owner) loggedIn(userID int64, username string) {
+	o.updateAccount(func(c *project.AccountContents) {
+		c.LoggedInUser = project.LoggedInUser{ID: userID, Username: username}
+	})
+}
+
 // AnswerLogin answers the step of the login named by seq. An answer for an
 // asking that is no longer the one waiting - another client answered first,
 // or the step moved on - is refused, so two clients typing at once cannot
