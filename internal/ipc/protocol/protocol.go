@@ -39,5 +39,6 @@ func events() *wire.Kinds[core.Event] {
 	wire.Register[core.Notification](k, "notification")
 	wire.Register[core.AccountEnded](k, "account_ended")
 	wire.Register[core.HostFailure](k, "host_failure")
+	wire.Register[core.HostStopping](k, "host_stopping")
 	return k
 }

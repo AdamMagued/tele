@@ -99,7 +99,6 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 		log:      zap.NewNop(),
 		notifier: newNotifier(zap.NewNop()),
 		tmpDir:   t.TempDir(),
-		client:   core.NewAttachment(),
 		connect: func(endpoint internaltg.Endpoint, _ updates.StateStorage) core.Connection {
 			h.endpoints <- endpoint
 			mu.Lock()
@@ -111,6 +110,7 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 			return &heldConnection{updates: make(chan store.Event)}
 		},
 	}
+	h.app.clients, h.app.client = newClients()
 	_, err = h.app.openNext()
 	require.NoError(t, err)
 	// Runs before the temp directories are removed: an account's database

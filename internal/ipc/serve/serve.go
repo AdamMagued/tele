@@ -74,7 +74,9 @@ func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment, host wir
 	}
 	err = c.end(err, conn)
 	cancel()
-	<-other
+	// The connection's end is the first side's to say; the other side only
+	// has to be done.
+	<-other //nolint:errcheck
 	running.Wait()
 	return err
 }
@@ -126,7 +128,9 @@ type served struct {
 	calls map[uint64]context.CancelFunc
 }
 
-// pump passes on everything the attachment's stream carries, until ctx ends.
+// pump passes on everything the attachment's stream carries, until ctx ends or
+// the host says it is stopping: that is the last thing the client hears, and
+// the connection ends on it (#208).
 func (c *served) pump(ctx context.Context) error {
 	for {
 		select {
@@ -140,6 +144,9 @@ func (c *served) pump(ctx context.Context) error {
 				return fmt.Errorf("%w: %v", wire.ErrProtocol, err)
 			}
 			if err := c.enc.Encode(f); err != nil {
+				return nil
+			}
+			if _, stopping := v.(core.HostStopping); stopping {
 				return nil
 			}
 		}

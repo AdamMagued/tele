@@ -56,6 +56,11 @@ func TestTheStreamCrossesInOrder(t *testing.T) {
 
 	var sent []any
 	for _, ev := range protocol.Events.Members() {
+		// A host that stops ends the connection on it, so nothing could
+		// follow it here; it has a test of its own.
+		if ev == reflect.TypeFor[core.HostStopping]() {
+			continue
+		}
 		v := reflect.New(ev).Elem()
 		ipctest.Fill(v)
 		sent = append(sent, v.Interface())

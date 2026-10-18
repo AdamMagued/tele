@@ -63,6 +63,53 @@ func TestAClientReachesItsHostOverTheSocket(t *testing.T) {
 	}
 }
 
+// A host that stops says so, and that is the last thing its client hears: the
+// connection ends on it, without the host's context being called off, so the
+// client can tell a host that quit from one that broke (#208).
+func TestAHostThatStopsSaysSoLast(t *testing.T) {
+	ep, err := ipc.EndpointFor("tele-test", t.TempDir())
+	require.NoError(t, err)
+	l, err := ipc.Listen(ep)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	att := core.NewAttachment()
+	served := make(chan error, 1)
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			served <- err
+			return
+		}
+		served <- serve.Conn(context.Background(), conn, att, hello)
+	}()
+	conn, err := ipc.Dial(context.Background(), ep)
+	require.NoError(t, err)
+	a, err := dial.Dial(context.Background(), conn, hello)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = a.Close() })
+
+	att.Tell(core.HostStopping{})
+
+	select {
+	case got := <-a.Stream():
+		assert.Equal(t, core.HostStopping{}, got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the client never heard the host was stopping")
+	}
+	select {
+	case _, open := <-a.Stream():
+		assert.False(t, open, "nothing follows it")
+	case <-time.After(2 * time.Second):
+		t.Fatal("the connection outlived the host's stop")
+	}
+	select {
+	case err := <-served:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("serving the connection did not end")
+	}
+}
+
 // fakeHost is a host the test plays by hand: it answers the handshake, and
 // the rest of the connection is the test's to drive.
 type fakeHost struct {

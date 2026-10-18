@@ -18,6 +18,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/notices"
 	"github.com/sorokin-vladimir/tele/internal/proxy"
 	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
@@ -42,9 +43,11 @@ type App struct {
 	mu     sync.Mutex
 	acct   *account
 	opened uint64
-	// client is the TUI's attachment: its link to this host for the whole
-	// process, seated at each account's owner in turn (#309).
-	client *core.Attachment
+	// clients is every attachment the host has, seated at each account's owner
+	// in turn; client is the TUI's own among them, its link to this host for
+	// the whole process (#309, #208).
+	clients *hosting.Clients
+	client  *core.Attachment
 	// switching serialises the end of one account and the start of the next
 	// with the stop of whichever is running when the process exits.
 	switching sync.Mutex
@@ -220,8 +223,8 @@ func New(cfgStore *config.Store, key appkey.Key, log *zap.Logger, verbose bool, 
 		notifier: newNotifier(log),
 		tmpDir:   tmpDir,
 		verbose:  verbose,
-		client:   core.NewAttachment(),
 	}
+	a.clients, a.client = newClients()
 	if _, err := a.openNext(); err != nil {
 		return nil, err
 	}

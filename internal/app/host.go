@@ -11,6 +11,7 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/accountstate"
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/notices"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui"
@@ -24,6 +25,14 @@ import (
 // of an account lives in the host, which is what lets the next one start with
 // nothing of the last. The client outlives the accounts as the host does, and
 // draws each one itself (#309).
+
+// newClients is the host's clients with the TUI's own attachment among them.
+func newClients() (*hosting.Clients, *core.Attachment) {
+	clients := hosting.NewClients()
+	client := core.NewAttachment()
+	clients.Add(client)
+	return clients, client
+}
 
 // current is the account running now.
 func (a *App) current() *account {
@@ -74,7 +83,7 @@ func (a *App) openNext() (*account, error) {
 	a.mu.Lock()
 	a.acct = acct
 	a.mu.Unlock()
-	a.client.Join(acct.owner)
+	a.clients.Join(acct.owner)
 	return acct, nil
 }
 
@@ -160,7 +169,7 @@ func (a *App) listen(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case reason := <-a.client.EndRequests():
+		case reason := <-a.clients.EndRequests():
 			go a.endAccount(ctx, a.current(), reason)
 		}
 	}
@@ -219,12 +228,12 @@ func (a *App) endAccount(ctx context.Context, acct *account, reason core.EndReas
 		return
 	}
 	discarded := acct.owner.UnsentCount()
-	a.client.Leave(core.AccountEnded{Reason: reason, Discarded: discarded})
+	a.clients.Leave(core.AccountEnded{Reason: reason, Discarded: discarded})
 	acct.stop()
 
 	if err := accountstate.End(acct.startup.stateDir, acct.startup.sessionFile); err != nil {
 		a.log.Error("the account that ended could not be removed", zap.Error(err))
-		a.client.Tell(core.HostFailure{Err: telerr.From(fmt.Errorf("the account that ended could not be removed: %w", err))})
+		a.clients.Tell(core.HostFailure{Err: telerr.From(fmt.Errorf("the account that ended could not be removed: %w", err))})
 		return
 	}
 	if acct.tmpDir != "" {
@@ -240,7 +249,7 @@ func (a *App) endAccount(ctx context.Context, acct *account, reason core.EndReas
 	next, err := a.openNext()
 	if err != nil {
 		a.log.Error("the next account could not be opened", zap.Error(err))
-		a.client.Tell(core.HostFailure{Err: telerr.From(err)})
+		a.clients.Tell(core.HostFailure{Err: telerr.From(err)})
 		return
 	}
 	a.launch(ctx, next)

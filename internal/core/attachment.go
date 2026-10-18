@@ -64,8 +64,8 @@ func NewAttachment() *Attachment {
 
 // Stream is everything addressed to this client, deltas and events alike, in
 // the order they were produced: project.Delta, Incoming, Typing, Progress,
-// DownloadProgress, Failure and Notification from the owner, and AccountEnded
-// and HostFailure from the host.
+// DownloadProgress, Failure and Notification from the owner, and AccountEnded,
+// HostFailure and HostStopping from the host.
 func (a *Attachment) Stream() <-chan any { return a.stream }
 
 // Join seats the attachment at o, the owner now current, and makes there the
@@ -121,6 +121,11 @@ func (a *Attachment) unseat() {
 type HostFailure struct {
 	Err *telerr.Error
 }
+
+// HostStopping tells a client that the host is stopping: the tele process
+// that held the account is quitting, and the connection ends after this. It
+// is what tells a host that quit from one that broke (#208).
+type HostStopping struct{}
 
 // Tell tells the client something from the host. Unlike the owner's events it
 // waits for the client to take it, since nothing repeats it, and gives up only

@@ -23,6 +23,7 @@ func (DownloadProgress) isEvent() {}
 func (Notification) isEvent()     {}
 func (AccountEnded) isEvent()     {}
 func (HostFailure) isEvent()      {}
+func (HostStopping) isEvent()     {}
 
 // Incoming reports that something arrived in a chat the client is not showing:
 // enough for the row to flash and follow the reorder (#39). It is an event, not

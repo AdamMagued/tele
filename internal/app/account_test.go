@@ -56,8 +56,8 @@ func testAccount(t *testing.T) (*account, *heldConnection) {
 // with nothing of this one still running (#297).
 func TestAccount_StopEndsItsConnectionAndClosesItsDatabase(t *testing.T) {
 	acct, conn := testAccount(t)
-	ended := make(chan error, 1)
-	acct.run(context.Background(), func(err error) { ended <- err })
+	ended := make(chan struct{}, 1)
+	acct.run(context.Background(), func(error) { ended <- struct{}{} })
 
 	done := make(chan struct{})
 	go func() { acct.stop(); close(done) }()
@@ -98,8 +98,8 @@ func TestAccount_StopWaitsForTheWorkRunAlongside(t *testing.T) {
 func TestAccount_EndsWithTheHost(t *testing.T) {
 	acct, conn := testAccount(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	ended := make(chan error, 1)
-	acct.run(ctx, func(err error) { ended <- err })
+	ended := make(chan struct{}, 1)
+	acct.run(ctx, func(error) { ended <- struct{}{} })
 
 	cancel()
 
