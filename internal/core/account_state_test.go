@@ -111,10 +111,10 @@ func TestLogin_AStepIsAnsweredOnce(t *testing.T) {
 	step, ok := recvAccount(t, a)
 	require.True(t, ok)
 
-	require.NoError(t, o.AnswerLogin(context.Background(), step.Login.Seq, "+100"))
+	require.NoError(t, a.AnswerLogin(context.Background(), step.Login.Seq, "+100"))
 	assert.Equal(t, "+100", (<-answered).Value)
 
-	err := o.AnswerLogin(context.Background(), step.Login.Seq, "+200")
+	err := a.AnswerLogin(context.Background(), step.Login.Seq, "+200")
 	assert.Equal(t, telerr.NotFound, telerr.Of(err))
 }
 
@@ -124,15 +124,109 @@ func TestLogin_AnAnswerToAnOldAskingIsRefused(t *testing.T) {
 	o, a := loginOwner(t, &stubConn{})
 	answered := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepPhone})
 	first, _ := recvAccount(t, a)
-	require.NoError(t, o.AnswerLogin(context.Background(), first.Login.Seq, "+100"))
+	require.NoError(t, a.AnswerLogin(context.Background(), first.Login.Seq, "+100"))
 	<-answered
 	ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepCode})
 	second, _ := recvAccount(t, a)
 
-	err := o.AnswerLogin(context.Background(), first.Login.Seq, "12345")
+	err := a.AnswerLogin(context.Background(), first.Login.Seq, "12345")
 
 	assert.Equal(t, telerr.NotFound, telerr.Of(err))
 	assert.Greater(t, second.Login.Seq, first.Login.Seq)
+}
+
+// drive answers the phone step through a, making it the login's driver.
+func drive(t *testing.T, o *Owner, a *Attachment) {
+	t.Helper()
+	answered := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepPhone})
+	step, ok := recvAccount(t, a)
+	require.True(t, ok)
+	require.NoError(t, a.AnswerLogin(context.Background(), step.Login.Seq, "+100"))
+	<-answered
+}
+
+// One client drives a login. Another one's answer is refused while it does,
+// and says why, rather than mixing two people's typing into one login (#211).
+func TestLogin_OnlyTheDriverAnswers(t *testing.T) {
+	o, a := loginOwner(t, &stubConn{})
+	b := attach(o)
+	drive(t, o, a)
+	answered := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepCode})
+	step, ok := recvAccount(t, a)
+	require.True(t, ok)
+
+	err := b.AnswerLogin(context.Background(), step.Login.Seq, "11111")
+	require.Error(t, err)
+	assert.Equal(t, telerr.Forbidden, telerr.Of(err))
+	assert.Contains(t, err.Error(), "another window")
+
+	require.NoError(t, a.AnswerLogin(context.Background(), step.Login.Seq, "12345"))
+	assert.Equal(t, "12345", (<-answered).Value)
+}
+
+// A driver that goes while a step waits abandons the login: the code it was
+// about to type is on its person's phone, and nobody else should finish it.
+// Whoever answers next starts again, and may be anyone (#211).
+func TestLogin_TheDriverGoingAbandonsTheStepWaiting(t *testing.T) {
+	o, a := loginOwner(t, &stubConn{})
+	b := attach(o)
+	b.Subscribe(project.AccountWindow{})
+	_, _ = recvAccount(t, b)
+	drive(t, o, a)
+	answered := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepCode})
+	code := recvStep(t, a, project.LoginCode, 0)
+
+	a.Detach()
+
+	assert.ErrorIs(t, answer(t, answered).Err, internaltg.ErrLoginAbandoned)
+	again := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepPhone})
+	step := recvStep(t, b, project.LoginPhone, code.Seq)
+	require.NoError(t, b.AnswerLogin(context.Background(), step.Seq, "+200"))
+	assert.Equal(t, "+200", answer(t, again).Value)
+}
+
+// A driver that goes while the login is waiting on Telegram abandons it too:
+// the step asked next is never put to anyone, and the login starts again.
+func TestLogin_TheDriverGoingBetweenStepsAbandonsTheNext(t *testing.T) {
+	o, a := loginOwner(t, &stubConn{})
+	b := attach(o)
+	b.Subscribe(project.AccountWindow{})
+	_, _ = recvAccount(t, b)
+	drive(t, o, a)
+
+	a.Detach()
+
+	answered := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepCode})
+	assert.ErrorIs(t, answer(t, answered).Err, internaltg.ErrLoginAbandoned)
+	again := ask(o, internaltg.AuthRequest{Step: internaltg.AuthStepPhone})
+	step := recvStep(t, b, project.LoginPhone, 1)
+	require.NoError(t, b.AnswerLogin(context.Background(), step.Seq, "+200"))
+	assert.Equal(t, "+200", answer(t, again).Value)
+	assert.Equal(t, 2, step.Seq, "the abandoned code step was never asked")
+}
+
+// answer is what the login is answered with, failing the test if nothing is.
+func answer(t *testing.T, answered <-chan internaltg.AuthResponse) internaltg.AuthResponse {
+	t.Helper()
+	select {
+	case r := <-answered:
+		return r
+	case <-time.After(time.Second):
+		require.FailNow(t, "the step was never answered")
+		return internaltg.AuthResponse{}
+	}
+}
+
+// recvStep is the next asking of kind after the asking seq that a hears.
+func recvStep(t *testing.T, a *Attachment, kind project.LoginStepKind, after int) project.LoginStep {
+	t.Helper()
+	for {
+		got, ok := recvAccount(t, a)
+		require.True(t, ok)
+		if got.Phase == project.AccountLoggingIn && got.Login.Kind == kind && got.Login.Seq > after {
+			return got.Login
+		}
+	}
 }
 
 func TestLogin_AFailureThatEndsTheLoginIsShown(t *testing.T) {

@@ -28,6 +28,14 @@ type LoginAnswerMsg struct {
 	Seq   int
 	Value string
 }
+
+// LoginRefusedMsg is an answer the owner would not take, and why, shown under
+// the field while the asking it answered is still on screen (#211).
+type LoginRefusedMsg struct {
+	Seq  int
+	Text string
+}
+
 type AuthErrorMsg struct{ Text string }
 type ConnectedMsg struct{}
 type TransitionToMainMsg struct{}
@@ -134,6 +142,12 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "password"
 		}
 		m.input.SetValue("")
+		return m, nil
+
+	case LoginRefusedMsg:
+		if m.step >= 0 && msg.Seq == m.seq {
+			m.err = msg.Text
+		}
 		return m, nil
 
 	case AuthErrorMsg:

@@ -52,8 +52,10 @@ func (o *Owner) attach(stream chan<- any) *seat {
 }
 
 // leave ends the seat: its subscriptions stop costing anything, the focus it
-// held is dropped, and nothing more of this owner reaches the client.
+// held is dropped, a login it was driving is abandoned, and nothing more of
+// this owner reaches the client.
 func (s *seat) leave() {
+	s.driverGone(s.id)
 	s.mu.Lock()
 	s.left = true
 	s.mu.Unlock()

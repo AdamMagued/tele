@@ -26,7 +26,14 @@ const (
 	reasonCodeInvalid     = "That code is not right. Try again."
 	reasonCodeExpired     = "That code has expired. A new one is on its way."
 	reasonPasswordInvalid = "That password is not right. Try again."
+	reasonAbandoned       = "The login was left unfinished in another window. Start again."
 )
+
+// ErrLoginAbandoned answers a step when the client answering the login went
+// away in the middle of it. The login starts again from the number: a code is
+// short-lived, and whoever answers next must not inherit one they never saw
+// (#211).
+var ErrLoginAbandoned = errors.New("the login was abandoned")
 
 // authorize returns the logged-in user, logging in first when there is no
 // session to speak of.
@@ -51,9 +58,23 @@ func (af *AuthFlow) authorize(ctx context.Context, self func(context.Context) (*
 	return self(ctx)
 }
 
-// login logs in through client, asking the person through af.
+// login logs in through client, asking the person through af. An attempt
+// abandoned in the middle is started again from the number, saying why.
 func (af *AuthFlow) login(ctx context.Context, client auth.FlowClient) error {
-	phone, sent, err := af.sendCode(ctx, client)
+	reason := ""
+	for {
+		err := af.attempt(ctx, client, reason)
+		if !errors.Is(err, ErrLoginAbandoned) {
+			return err
+		}
+		reason = reasonAbandoned
+	}
+}
+
+// attempt is one attempt at the login, from the number on; reason is why the
+// number is asked for, empty the first time.
+func (af *AuthFlow) attempt(ctx context.Context, client auth.FlowClient, reason string) error {
+	phone, sent, err := af.sendCode(ctx, client, reason)
 	if err != nil {
 		return err
 	}
@@ -77,8 +98,7 @@ func (af *AuthFlow) login(ctx context.Context, client auth.FlowClient) error {
 }
 
 // sendCode asks for the number until Telegram accepts it and sends a code.
-func (af *AuthFlow) sendCode(ctx context.Context, client auth.FlowClient) (string, tg.AuthSentCodeClass, error) {
-	reason := ""
+func (af *AuthFlow) sendCode(ctx context.Context, client auth.FlowClient, reason string) (string, tg.AuthSentCodeClass, error) {
 	for {
 		phone, err := af.request(ctx, AuthRequest{Step: AuthStepPhone, Err: reason})
 		if err != nil {

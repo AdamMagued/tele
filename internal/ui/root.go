@@ -719,6 +719,7 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screens.ConnectedMsg,
 		screens.AuthErrorMsg,
 		screens.SlowConnectMsg,
+		screens.LoginRefusedMsg,
 		components.ToggleMuteRequest,
 		components.ToggleUnreadRequest,
 		components.AddToFolderRequest,

@@ -21,6 +21,14 @@ type accountState struct {
 	// waiting is set while the step in c.Login has not been answered. One
 	// answer moves it on; a second for the same asking is refused.
 	waiting bool
+	// driver is the client driving the login: the one that answered its number,
+	// and the only one whose answers are taken until the login ends or the
+	// client goes. Zero while nobody drives it (#211).
+	driver clientID
+	// abandoned is set when the driver went while no step was waiting: the
+	// login was talking to Telegram, and the step it asks next is answered as
+	// abandoned rather than put to the clients.
+	abandoned bool
 }
 
 // Account is where the account stands now.
@@ -50,6 +58,14 @@ func (o *Owner) runLogin(ctx context.Context) {
 			return
 		case req := <-af.Requests:
 			o.log.Debug("auth step requested", zap.Int("step", int(req.Step)))
+			o.acct.mu.Lock()
+			abandoned := o.acct.abandoned
+			o.acct.abandoned = false
+			o.acct.mu.Unlock()
+			if abandoned {
+				o.abandonLogin(ctx)
+				continue
+			}
 			o.updateAccount(func(c *project.AccountContents) {
 				c.Phase = project.AccountLoggingIn
 				c.Login = project.LoginStep{Kind: loginStepKind(req.Step), Hint: req.Hint, Err: req.Err, Seq: c.Login.Seq + 1}
@@ -65,6 +81,7 @@ func (o *Owner) runLogin(ctx context.Context) {
 				c.Phase = project.AccountLoading
 				c.Login = project.LoginStep{Seq: c.Login.Seq}
 				o.acct.waiting = false
+				o.acct.driver = 0
 			})
 			o.loadAccount(ctx)
 			return
@@ -100,15 +117,28 @@ func (o *Owner) loggedIn(userID int64, username string) {
 	})
 }
 
-// AnswerLogin answers the step of the login named by seq. An answer for an
-// asking that is no longer the one waiting - another client answered first,
-// or the step moved on - is refused, so two clients typing at once cannot
-// answer one step twice.
-func (o *Owner) AnswerLogin(ctx context.Context, seq int, value string) error {
+// AnswerLogin answers, for the client from, the step of the login named by
+// seq. An answer for an asking that is no longer the one waiting - another
+// client answered first, or the step moved on - is refused, so two clients
+// typing at once cannot answer one step twice. The client that answers the
+// number drives the login from there, and another client's answer is refused
+// while it does (#211).
+func (s *seat) AnswerLogin(ctx context.Context, seq int, value string) error {
+	return s.answerLogin(ctx, s.id, seq, value)
+}
+
+func (o *Owner) answerLogin(ctx context.Context, from clientID, seq int, value string) error {
 	o.acct.mu.Lock()
 	if !o.acct.waiting || o.acct.c.Login.Seq != seq {
 		o.acct.mu.Unlock()
 		return &telerr.Error{Kind: telerr.NotFound, Op: "login", Detail: "this login step was already answered"}
+	}
+	if o.acct.driver != 0 && o.acct.driver != from {
+		o.acct.mu.Unlock()
+		return &telerr.Error{Kind: telerr.Forbidden, Op: "login", Detail: "this login is being answered in another window"}
+	}
+	if o.acct.c.Login.Kind == project.LoginPhone {
+		o.acct.driver = from
 	}
 	o.acct.waiting = false
 	o.acct.mu.Unlock()
@@ -117,6 +147,34 @@ func (o *Owner) AnswerLogin(ctx context.Context, seq int, value string) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// driverGone abandons the login driven by the client id, which has gone. A
+// step waiting for its answer is answered as abandoned at once; with none
+// waiting, the next one is (#211).
+func (o *Owner) driverGone(id clientID) {
+	o.acct.mu.Lock()
+	if o.acct.driver != id {
+		o.acct.mu.Unlock()
+		return
+	}
+	o.acct.driver = 0
+	waiting := o.acct.waiting
+	o.acct.waiting = false
+	o.acct.abandoned = !waiting
+	o.acct.mu.Unlock()
+	if waiting {
+		o.spawn(func() { o.abandonLogin(o.ctx) })
+	}
+}
+
+// abandonLogin answers the step the login is waiting on as abandoned, which
+// starts the login again from the number.
+func (o *Owner) abandonLogin(ctx context.Context) {
+	select {
+	case o.authFlow.Responses <- internaltg.AuthResponse{Err: internaltg.ErrLoginAbandoned}:
+	case <-ctx.Done():
 	}
 }
 

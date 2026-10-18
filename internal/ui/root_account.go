@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
 )
@@ -49,18 +50,21 @@ func (m RootModel) handleAccountDelta(next project.AccountContents) (RootModel, 
 	return m, tea.Batch(cmds...)
 }
 
-// handleLoginAnswer hands what was typed at a login step to the owner. A
-// refusal says the step was already answered, here or by another client, and
-// the account projection is already on its way with whatever comes next; any
-// other failure is the account ending, which arrives the same way. Either way
-// there is nothing to say here.
+// handleLoginAnswer hands what was typed at a login step to the owner. An
+// answer refused because another window drives the login says so under the
+// field (#211). Any other refusal says the step was already answered, here or
+// by another client, and the account projection is already on its way with
+// whatever comes next; any other failure is the account ending, which arrives
+// the same way. Neither has anything to say here.
 func (m RootModel) handleLoginAnswer(msg screens.LoginAnswerMsg) (RootModel, tea.Cmd) {
 	if m.owner == nil {
 		return m, nil
 	}
 	ctx, owner := m.ctx, m.owner
 	return m, func() tea.Msg {
-		_ = owner.AnswerLogin(ctx, msg.Seq, msg.Value)
+		if err := owner.AnswerLogin(ctx, msg.Seq, msg.Value); telerr.Of(err) == telerr.Forbidden {
+			return screens.LoginRefusedMsg{Seq: msg.Seq, Text: "This login is being answered in another window."}
+		}
 		return nil
 	}
 }

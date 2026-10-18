@@ -93,6 +93,9 @@ type ownerStub struct {
 	loggedOut     []bool
 	logOutErrs    []error
 	endedWith     []core.EndReason
+
+	// answerErr is what every login answer is refused with, nil to take it.
+	answerErr error
 }
 
 func (o *ownerStub) EndAccount(reason core.EndReason) { o.endedWith = append(o.endedWith, reason) }
@@ -100,7 +103,7 @@ func (o *ownerStub) EndAccount(reason core.EndReason) { o.endedWith = append(o.e
 // AnswerLogin records what the login screen answered.
 func (o *ownerStub) AnswerLogin(_ context.Context, seq int, value string) error {
 	o.answers = append(o.answers, screens.LoginAnswerMsg{Seq: seq, Value: value})
-	return nil
+	return o.answerErr
 }
 
 func (o *ownerStub) LogOutPreview() core.LogOutPreview { return o.logOutPreview }

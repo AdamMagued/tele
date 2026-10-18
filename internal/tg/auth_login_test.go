@@ -70,6 +70,9 @@ type ask struct {
 	step   AuthStep
 	reason string
 	answer string
+	// abandon answers the step with ErrLoginAbandoned rather than a value: the
+	// client answering the login went away.
+	abandon bool
 }
 
 // playScreen answers the login's requests the way the login screen would, and
@@ -82,6 +85,10 @@ func playScreen(t *testing.T, af *AuthFlow, asks []ask) {
 			case req := <-af.Requests:
 				assert.Equal(t, a.step, req.Step)
 				assert.Equal(t, a.reason, req.Err)
+				if a.abandon {
+					af.Responses <- AuthResponse{Err: ErrLoginAbandoned}
+					continue
+				}
 				af.Responses <- AuthResponse{Value: a.answer}
 			case <-time.After(2 * time.Second):
 				assert.Fail(t, "login stopped asking", "expected step %d", a.step)
@@ -105,6 +112,24 @@ func TestLogin_MistypedCodeIsAskedAgain(t *testing.T) {
 	require.NoError(t, af.login(context.Background(), client))
 	assert.Equal(t, 1, client.sends)
 	assert.Equal(t, 2, client.signIns)
+}
+
+// A login left in the middle starts again from the number, saying why, rather
+// than ending the account: whoever answers next starts fresh instead of
+// inheriting a code they never saw (#211).
+func TestLogin_AnAbandonedLoginStartsAgainFromTheNumber(t *testing.T) {
+	af := NewAuthFlow()
+	client := &scriptedLogin{}
+	playScreen(t, af, []ask{
+		{step: AuthStepPhone, answer: "+10000000000"},
+		{step: AuthStepCode, abandon: true},
+		{step: AuthStepPhone, reason: reasonAbandoned, answer: "+10000000000"},
+		{step: AuthStepCode, answer: "12345"},
+	})
+
+	require.NoError(t, af.login(context.Background(), client))
+	assert.Equal(t, 2, client.sends, "the new attempt asks for a code of its own")
+	assert.Equal(t, 1, client.signIns)
 }
 
 // An expired code is not the person's mistake: a new one is sent and asked for.
