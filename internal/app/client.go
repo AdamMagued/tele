@@ -48,6 +48,9 @@ type ClientConfig struct {
 	// tele's: its settings are then shown and not changed from here. Empty
 	// when the host is in this process (#208).
 	HostConfig string
+	// OtherWindows counts the other clients of the host this process holds,
+	// which quitting would close too. Nil when the host is another tele's.
+	OtherWindows func() int
 	// StateDir is where the machine's record of the notices shown is kept.
 	StateDir string
 	// Notices are the one-time notices this start may show.
@@ -167,7 +170,7 @@ func (c *Client) buildRoot(ctx context.Context, first bool) ui.RootModel {
 	root := ui.NewRootModel(c.c.Verbose)
 	root = root.WithContext(ctx).WithImageMode(c.imageMode).WithConfig(cfg).WithKeyMap(c.keyMap).WithOwner(c.c.Attachment).
 		WithLogger(c.c.Log).WithConfigReload(c.c.Reload).WithSettingsStore(c.c.Store).WithLogPath(c.c.LogPath).
-		WithHostConfig(c.c.HostConfig)
+		WithHostConfig(c.c.HostConfig).WithOtherWindows(c.c.OtherWindows)
 	root.SetLoginModel(screens.NewLoginModel())
 	root.SetTmpDir(c.nextScreenDir())
 	if first {

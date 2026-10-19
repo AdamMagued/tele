@@ -127,6 +127,9 @@ type RootModel struct {
 	// unsent is what was being typed when the host was lost, kept for the
 	// client to hand back on the way out (#208).
 	unsent string
+	// othersAttached counts the other windows attached to the host this
+	// window holds; nil when the host is another tele's (#208).
+	othersAttached func() int
 	// configWarnings are the non-fatal config notices, shown as toasts once the
 	// TUI is up. They are also logged and printed to stderr, but stderr is wiped
 	// by the alt-screen a moment later, so on their own those two amount to

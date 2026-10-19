@@ -17,7 +17,6 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/ipc"
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
-	"github.com/sorokin-vladimir/tele/internal/notices"
 	"github.com/sorokin-vladimir/tele/internal/statedir"
 	"github.com/sorokin-vladimir/tele/internal/version"
 )
@@ -97,7 +96,12 @@ func (r run) host() error {
 	if err != nil {
 		return err
 	}
-	return r.runClient(att, host.Reload, "", app.StartupNotices(cfg.StateDir, stateMoved, cfg.SessionPinned))
+	return r.runClient(att, app.ClientConfig{
+		Reload: host.Reload,
+		// This window is one of the host's clients; the rest close with it.
+		OtherWindows: func() int { return max(clients.Count()-1, 0) },
+		Notices:      app.StartupNotices(cfg.StateDir, stateMoved, cfg.SessionPinned),
+	})
 }
 
 // client runs this process as a client of a host another tele keeps, over the
@@ -117,7 +121,11 @@ func (r run) client() error {
 		}
 		return r.cfgStore.Current(), nil
 	}
-	return r.runClient(att, reload, att.Host().Config, app.StartupNotices(r.cfgStore.Current().StateDir, false, false))
+	return r.runClient(att, app.ClientConfig{
+		Reload:     reload,
+		HostConfig: att.Host().Config,
+		Notices:    app.StartupNotices(r.cfgStore.Current().StateDir, false, false),
+	})
 }
 
 // attach reaches the host at ep the way any client does.
@@ -135,22 +143,20 @@ func (r run) attach(ep ipc.Endpoint) (*dial.Attachment, error) {
 	return att, nil
 }
 
-// runClient draws the account over att until the person quits.
-func (r run) runClient(att *dial.Attachment, reload func() (*config.Config, error), hostConfig string, startNotices []notices.Notice) error {
-	client := app.NewClient(app.ClientConfig{
-		Store:         r.cfgStore,
-		Log:           r.log,
-		Attachment:    att,
-		Detach:        func() { _ = att.Close() },
-		Reload:        reload,
-		HostConfig:    hostConfig,
-		StateDir:      r.cfgStore.Current().StateDir,
-		Notices:       startNotices,
-		ThemeWarnings: r.themeWarnings,
-		LogPath:       r.logPath,
-		Verbose:       r.verbose,
-	})
-	if err := client.Run(); err != nil {
+// runClient draws the account over att until the person quits. role is what
+// differs between a client of this process's own host and one of another
+// tele's: how it reloads, whose settings it shows, what quitting closes and
+// which notices it may show; the rest is filled in here.
+func (r run) runClient(att *dial.Attachment, role app.ClientConfig) error {
+	role.Store = r.cfgStore
+	role.Log = r.log
+	role.Attachment = att
+	role.Detach = func() { _ = att.Close() }
+	role.StateDir = r.cfgStore.Current().StateDir
+	role.ThemeWarnings = r.themeWarnings
+	role.LogPath = r.logPath
+	role.Verbose = r.verbose
+	if err := app.NewClient(role).Run(); err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil

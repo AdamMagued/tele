@@ -25,5 +25,21 @@ func (m RootModel) handleHostLost(msg HostLostMsg) (RootModel, tea.Cmd) {
 	return m.routeLoginError(m.loginErrorText(cause, ""))
 }
 
+// WithOtherWindows says this window holds the host, and how many other
+// windows are attached to it now: quitting closes them too. Unset in a window
+// attached to another tele's host, which closes only itself.
+func (m RootModel) WithOtherWindows(count func() int) RootModel {
+	m.othersAttached = count
+	return m
+}
+
+// otherWindows is how many other windows quitting this one would close.
+func (m RootModel) otherWindows() int {
+	if m.othersAttached == nil {
+		return 0
+	}
+	return m.othersAttached()
+}
+
 // Unsent is what was being typed when the host was lost, empty otherwise.
 func (m RootModel) Unsent() string { return m.unsent }

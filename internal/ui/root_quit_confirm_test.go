@@ -53,6 +53,25 @@ func TestRoot_QuitConfirmation_OpensModal(t *testing.T) {
 	assert.False(t, isQuitCmd(t, cmd), "no quit while the confirmation is open")
 }
 
+// The window that holds the host takes every other window with it when it
+// quits, so with others attached it always asks first, whatever confirm_quit
+// says, and says how many will close. Alone, it quits as the setting says
+// (#208).
+func TestRoot_QuitConfirmation_AskedWhenOtherWindowsWouldClose(t *testing.T) {
+	others := 2
+	m := confirmModel(t, false).WithOtherWindows(func() int { return others })
+
+	newM, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	root := newM.(RootModel)
+	require.NotNil(t, root.confirmQuit, "quitting would close other windows")
+	assert.False(t, isQuitCmd(t, cmd))
+	assert.Contains(t, root.confirmQuit.View(), "2 other windows")
+
+	others = 0
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	assert.True(t, isQuitCmd(t, cmd), "alone, it quits as the setting says")
+}
+
 // y or enter confirms the quit.
 func TestRoot_QuitConfirmation_ConfirmQuits(t *testing.T) {
 	m := confirmModel(t, true)

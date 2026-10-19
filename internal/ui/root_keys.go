@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sorokin-vladimir/tele/internal/domain"
@@ -35,6 +37,16 @@ func (m RootModel) globalAction(action keys.Action) (tea.Model, tea.Cmd, bool) {
 		}
 		return m, nil, true
 	case keys.ActionQuit:
+		// The window holding the host takes the others with it, so with any
+		// attached it asks whatever confirm_quit says (#208).
+		if others := m.otherWindows(); others > 0 {
+			question := fmt.Sprintf("Quit tele? %d other windows on this account will close too.", others)
+			if others == 1 {
+				question = "Quit tele? 1 other window on this account will close too."
+			}
+			m.confirmQuit = components.NewConfirmModal("Quit", question, m.width, m.height)
+			return m, nil, true
+		}
 		if m.cfg != nil && m.cfg.UI.ConfirmQuit {
 			m.confirmQuit = components.NewConfirmModal("Quit", "Quit tele?", m.width, m.height)
 			return m, nil, true
