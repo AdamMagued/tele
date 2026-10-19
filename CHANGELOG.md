@@ -31,8 +31,36 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
   an account that has already ended no longer touches the next one (#309).
 - Groundwork for the next step: everything the interface asks of the account
   and is told by it can now cross a local socket, after the two sides check
-  that they speak the same protocol. Nothing uses it yet, so nothing should
-  look different (#205, #206, #209).
+  that they speak the same protocol (#205, #206, #209).
+- The interface now reaches the account through that socket even when it runs
+  in the same process: every `tele` starts by looking for the one that holds
+  the state directory, and becomes it when there is none (#208).
+- A second `tele` on the same account no longer exits. It joins the first as
+  another window, sharing its connection, and closes when the first one quits.
+  The first one asks before quitting while others are joined to it, whatever
+  `confirm_quit` says. A window whose `tele` went away says whether it quit or
+  the connection broke, and prints what was typed but not sent when you quit
+  it (#208, #210).
+- In a window that joined another `tele`, the settings that belong to the
+  connection - the app key, the state directory, the proxy, the cache sizes,
+  how much history is fetched, desktop notifications - are shown read-only and
+  name the config file they are read from. `history_limit` is now always the
+  one the `tele` holding the connection reads (#208).
+- A window that joined another `tele` logs to `tele-client.log`, with its
+  process id on every line (#208).
+- A `tele` that cannot be joined - 1.11, an earlier 2.0 beta, or one speaking
+  another protocol - is named, with its version or process id, instead of the
+  new one waiting on it for ever (#208).
+- One client answers a login at a time. An answer typed in another window is
+  refused and says so, and a login whose window closed halfway starts again
+  from the phone number, so nobody finishes it with a code they never saw
+  (#211).
+- What is typed to log in is kept out of the log at every level, and a test
+  now holds it to that (#211).
+- Mentioning someone found in a group's member list keeps working when the
+  window has no address for them: the address is filled in by the `tele` that
+  holds the connection, and a mention it has none for is sent as plain text
+  (#208).
 
 ## [1.11.13] - 2026-10-13
 

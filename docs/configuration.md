@@ -27,6 +27,14 @@ Four settings are shown but not changed there - which account this is, and where
 its state lives. Changing those means moving files and reopening a session, so
 they are a deliberate edit to the file rather than a keystroke.
 
+Some settings belong to the `tele` that holds the Telegram connection: the app
+key, the state directory, the proxy, the cache sizes, how much history is
+fetched at a time, and the desktop notifications. The rest belong to the window
+you are looking at: the theme, the keys, toasts, how images are drawn. In a
+window that joined another `tele` (see [State directory](#state-directory)),
+the first kind is shown read-only and names the config file that `tele` reads
+it from, since a change written here would never reach it.
+
 ## config.yml
 
 ```yaml
@@ -167,11 +175,23 @@ proxy:
 local database, and the instance lock. It defaults to `$XDG_STATE_HOME/tele`,
 falling back to `~/.local/state/tele`.
 
-Only one `tele` instance can use a state directory at a time. A second one exits
-immediately and names the process holding it. Two instances shared one session
-and one database with nothing arbitrating between them, quietly overwriting each
-other's unread counts and sync state, so this is now refused rather than left to
-fail quietly later.
+One `tele` holds a state directory at a time: it keeps the Telegram connection,
+the session and the database. A second `tele` started on the same state
+directory does not open them again. It joins the first one instead, as another
+window on the same account, sharing its connection. Closing the second window
+leaves the first running. Closing the first closes every window joined to it,
+so it asks before quitting while others are open, whatever `confirm_quit` says.
+A window that loses the first `tele` says so, and prints whatever was typed in
+its composer when you quit it.
+
+A window that joined another `tele` writes its log to `tele-client.log`, beside
+`tele.log`, with the process id on every line.
+
+A `tele` too old to be joined - 1.11 or an earlier 2.0 beta - still holds the
+state directory without letting anything join it. A newer one started beside it
+waits a few seconds, then says which process holds the directory and exits. The
+same happens when the two speak different versions of their protocol. Quit the
+running one and start again.
 
 The older `telegram.session_file` key still works and keeps the session where it
 points, but it is deprecated and will be removed in the next release. If you have
