@@ -10,8 +10,6 @@ import (
 	"strconv"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/sorokin-vladimir/tele/internal/accountstate"
 	"github.com/sorokin-vladimir/tele/internal/app"
@@ -119,25 +117,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "state dir: %v\n", err)
 		os.Exit(1)
 	}
-	level := zap.NewAtomicLevelAt(zap.InfoLevel)
-	if *verbose {
-		level = zap.NewAtomicLevelAt(zap.DebugLevel)
-	}
-	logPath := filepath.Join(defaultState, "tele.log")
-	w := zapcore.AddSync(&lumberjack.Logger{
-		Filename:   logPath,
-		MaxSize:    10,
-		MaxBackups: 3,
-		Compress:   false,
-	})
-	core := zapcore.NewCore(
-		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		w,
-		level,
-	)
-	// Every line is tagged with the release it came from: a log excerpt from a
-	// user is otherwise impossible to attribute to a build.
-	log := zap.New(core).With(zap.String("v", version.Version))
+	log, logPath := openLog(defaultState, true, *verbose)
 	defer log.Sync() //nolint:errcheck
 
 	// The log keeps every warning on every run, including the ones the TUI shows
