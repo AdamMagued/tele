@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -20,6 +21,11 @@ const maxBinarySize = 40 << 20
 func TestBinary_StaysSmall(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the binary")
+	}
+	if runtime.GOOS == "windows" {
+		// go-toast executes a text/template, which keeps every method on
+		// Windows already, so the size tells nothing there (#314).
+		t.Skip("every method is kept on Windows")
 	}
 	out := filepath.Join(t.TempDir(), "tele")
 	build := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", out, ".")
