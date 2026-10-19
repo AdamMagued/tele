@@ -1,13 +1,10 @@
 package app
 
 import (
-	"os"
-
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/proxy"
 	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
-	"github.com/sorokin-vladimir/tele/internal/ui/media"
 )
 
 // startup is what the process settles once, when it starts, and hands every
@@ -28,7 +25,6 @@ type startup struct {
 	// The cache budgets, in bytes. Zero keeps nothing between runs.
 	mediaCacheSize  int64
 	avatarCacheSize int64
-	imageMode       media.Mode
 }
 
 // newStartup reads the startup values out of the config the process started
@@ -49,7 +45,6 @@ func newStartup(cfg *config.Config, key appkey.Key) (startup, error) {
 		route:           route,
 		mediaCacheSize:  cfg.Photos.DiskCacheSize,
 		avatarCacheSize: cfg.Avatars.DiskCacheSize,
-		imageMode:       media.DetectMode(cfg.Photos.Mode, os.Getenv),
 	}, nil
 }
 

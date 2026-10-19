@@ -4,14 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
+	"path/filepath"
 	"sync"
-	"syscall"
-	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/term"
 	"github.com/gotd/td/telegram/updates"
 	"go.uber.org/zap"
 
@@ -22,156 +17,132 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/notices"
 	"github.com/sorokin-vladimir/tele/internal/proxy"
 	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
-	"github.com/sorokin-vladimir/tele/internal/ui"
-	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 )
 
-type App struct {
-	// cfgStore is the config file and the config the app is running on. The app
-	// asks it rather than holding a Config of its own, so that a reload reaches
-	// everything through one place.
+// Host runs owners, one account after another, for as long as the process
+// lives, and seats every client it has at each owner in turn (#297, #208). It
+// draws nothing: the clients do, each in its own process or beside the host in
+// this one.
+type Host struct {
+	// cfgStore is the config file and the config the host is running on. The
+	// host asks it rather than holding a Config of its own, so that a reload
+	// reaches every account through one place.
 	cfgStore *config.Store
 	log      *zap.Logger
 	// startup is what the process settled when it started, handed to every
 	// account it opens in place of what the file says by then (#239).
 	startup startup
 
-	// The App is the host: it outlives the accounts that pass through the
-	// process and holds nothing of theirs (#297). acct is the one running now,
-	// changed under mu when an account ends and the next one starts; opened
-	// counts the accounts opened, for naming their scratch directories.
+	// Nothing of an account lives in the host (#297). acct is the one running
+	// now, changed under mu when an account ends and the next one starts;
+	// opened counts the accounts opened, for naming their scratch directories.
 	mu     sync.Mutex
 	acct   *account
 	opened uint64
 	// clients is every attachment the host has, seated at each account's owner
-	// in turn; client is the TUI's own among them, its link to this host for
-	// the whole process (#309, #208).
+	// in turn (#309, #208).
 	clients *hosting.Clients
-	client  *core.Attachment
 	// switching serialises the end of one account and the start of the next
-	// with the stop of whichever is running when the process exits.
+	// with the stop of whichever is running when the host stops.
 	switching sync.Mutex
-	// exitErr is what the last account's connection ended with, for the exit
-	// code.
-	exitErr error
 
 	// What the host needs to open each account: how to connect to Telegram and
 	// where desktop notifications go.
 	connect  func(internaltg.Endpoint, updates.StateStorage) core.Connection
 	notifier core.Notifier
 
-	// prog draws whichever account is running; keyMap and noticeSeen are the
-	// person's and the machine's, so every account's model shares them.
-	prog       *tea.Program
-	keyMap     keys.KeyMap
-	noticeSeen notices.Seen
-	// screens counts the models the client has built, and screenDir is the
-	// scratch directory of the one on screen: what it saved to show the person
-	// is the account's, and goes when the next model replaces it.
-	screens   uint64
-	screenDir string
-
-	// tmpDir holds this run's scratch files: media saved for an external
-	// player, GIFs staged for decoding, and the media cache when the user asked
-	// for no persistent one. Each account works in a directory of its own
-	// inside it, removed when the account ends. Removed on exit.
-	tmpDir  string
-	verbose bool
-	// stateMoved reports that startup migration relocated the account state, so
-	// the user can be told where it went.
-	stateMoved bool
-	// themeWarnings is what was wrong with the theme files when the process
-	// started. Kept apart from the config, which a reload replaces (#239).
-	themeWarnings []string
-	// logPath is this run's log file, known only to the caller that opened it.
-	logPath string
-	// selfMu guards the account identity: it arrives on the Telegram goroutine
-	// and is read on exit, after the TUI is gone.
-	selfMu       sync.Mutex
-	selfID       int64
-	selfUsername string
+	// tmpDir holds the host's scratch files: the media cache when the user
+	// asked for no persistent one, and each account's own directory inside it,
+	// removed when the account ends. Removed when the host stops.
+	tmpDir string
 }
 
-// SetThemeWarnings records what was wrong with the theme files when the process
-// started, for the first model to show with the config warnings.
-func (a *App) SetThemeWarnings(warnings []string) { a.themeWarnings = warnings }
-
-// SetStateMoved records whether startup migration relocated the account state.
-func (a *App) SetStateMoved(moved bool) { a.stateMoved = moved }
-
-// SetLogPath records where this run's log is written, so the farewell banner
-// can point at it.
-func (a *App) SetLogPath(path string) { a.logPath = path }
-
-func (a *App) setSelf(userID int64, username string) {
-	a.selfMu.Lock()
-	defer a.selfMu.Unlock()
-	a.selfID, a.selfUsername = userID, username
-}
-
-func (a *App) self() (int64, string) {
-	a.selfMu.Lock()
-	defer a.selfMu.Unlock()
-	return a.selfID, a.selfUsername
-}
-
-// pendingNotices lists the one-time startup messages this build can show.
-// Conditional entries are omitted when they do not apply, so a user only ever
-// sees what actually happened on their machine.
-func (a *App) pendingNotices() []notices.Notice {
-	const delay = 7 * time.Second
-	out := []notices.Notice{
-		{
-			ID:    "single-instance-v1.10",
-			Title: "Only one tele at a time",
-			Delay: delay,
-			Body: "Starting a second tele on the same account now fails with a message " +
-				"instead of starting. Two instances shared one session and one database " +
-				"with nothing arbitrating between them, quietly overwriting each other's " +
-				"unread counts and sync state, which surfaced later as missed messages.",
-		},
-	}
-	if a.stateMoved {
-		out = append(out, notices.Notice{
-			ID:    "state-dir-moved-v1.10",
-			Title: "Your data moved",
-			Delay: delay,
-			Body: "The session and local database now live in " + a.startup.stateDir +
-				", instead of next to the config file. They were moved for you and " +
-				"nothing was lost: you are still logged in. The old location is now empty " +
-				"and can be ignored.",
-		})
-	}
-	if a.startup.sessionPinned {
-		out = append(out, notices.Notice{
-			ID:    "session-file-deprecated-v1.10",
-			Title: "session_file is going away",
-			Delay: delay,
-			Body: "Your config sets telegram.session_file, so your session was left exactly " +
-				"where it is. That setting is deprecated and will be removed in the next " +
-				"release. Replace it with state_dir pointing at the directory that should " +
-				"hold the session and the database.",
-		})
-	}
-	return out
-}
-
-// cfg is the config the app is running on. Asked for rather than held, so that
-// a reload is seen by whoever asks next.
-func (a *App) cfg() *config.Config { return a.cfgStore.Current() }
-
-// reloadConfig re-reads the config file and hands the result to everything that
-// holds one, before returning it to the UI to apply to itself. This is the whole
-// of "apply what is on disk": one function, called whether the change was made
-// in the settings overlay or in an editor (ADR 0009).
-func (a *App) reloadConfig() (*config.Config, error) {
-	if err := a.cfgStore.Reload(); err != nil {
+// NewHost builds the host over the config the process started with and the
+// app key it resolved, and opens the first account, seating clients at its
+// owner. The key is handed in rather than read from the config: it is settled
+// from the file and from how the binary was built, and the file alone does not
+// know the second (#239).
+func NewHost(cfgStore *config.Store, key appkey.Key, log *zap.Logger, trace bool, clients *hosting.Clients) (*Host, error) {
+	start, err := newStartup(cfgStore.Current(), key)
+	if err != nil {
 		return nil, err
 	}
-	cfg := a.cfg()
-	acct := a.current()
-	acct.owner.SetConfig(cfg)
+	if err := checkRoute(start.route, cfgStore.Path(), log); err != nil {
+		return nil, err
+	}
+
+	// The media cache may live in the temp directory, and the owner needs the
+	// cache before it starts.
+	tmpDir, err := os.MkdirTemp("", "tele-*")
+	if err != nil {
+		log.Warn("failed to create temp dir for media", zap.Error(err))
+		tmpDir = ""
+	}
+	removeLegacyMediaCache(log)
+
+	h := &Host{
+		cfgStore: cfgStore,
+		log:      log,
+		startup:  start,
+		clients:  clients,
+		connect: func(endpoint internaltg.Endpoint, stateStorage updates.StateStorage) core.Connection {
+			return internaltg.NewGotdClient(log, endpoint, stateStorage, trace)
+		},
+		notifier: newNotifier(log),
+		tmpDir:   tmpDir,
+	}
+	acct, err := h.openNext()
+	if err != nil {
+		return nil, err
+	}
+	h.carryOverNotices(acct)
+	return h, nil
+}
+
+// Start runs the current account, and ends it when a client asks.
+func (h *Host) Start(ctx context.Context) {
+	go h.listen(ctx)
+	h.launch(ctx, h.current())
+}
+
+// Stop stops whichever account is running, and not while another is taking its
+// place, then removes the host's scratch files.
+func (h *Host) Stop() {
+	h.switching.Lock()
+	h.current().stop()
+	h.switching.Unlock()
+	if h.tmpDir != "" {
+		_ = os.RemoveAll(h.tmpDir)
+	}
+}
+
+// Reload re-reads the config file and hands the result to the owner running
+// now. This is the whole of "apply what is on disk" for the host: one
+// function, whether the change was made in the settings overlay or in an
+// editor (ADR 0009).
+func (h *Host) Reload() (*config.Config, error) {
+	if err := h.cfgStore.Reload(); err != nil {
+		return nil, err
+	}
+	cfg := h.cfgStore.Current()
+	h.current().owner.SetConfig(cfg)
 	return cfg, nil
+}
+
+// cfg is the config the host is running on. Asked for rather than held, so
+// that a reload is seen by whoever asks next.
+func (h *Host) cfg() *config.Config { return h.cfgStore.Current() }
+
+// carryOverNotices brings the machine's record of the notices already shown
+// out of acct's database, where an earlier build kept it, into the file every
+// client reads, the first time the file is made. The database is the host's,
+// so this is the host's to do, once, before any client reads the file.
+func (h *Host) carryOverNotices(acct *account) {
+	seen, existed := notices.NewFileSeen(filepath.Join(h.startup.stateDir, NoticesFile))
+	if existed {
+		return
+	}
+	notices.CarryOver(seen, notices.NewSQLiteSeen(acct.store.DB()), noticeIDs())
 }
 
 // checkRoute settles how this process will reach Telegram, before anything is
@@ -188,99 +159,4 @@ func checkRoute(route proxy.Route, path string, log *zap.Logger) error {
 		return fmt.Errorf("%w (set proxy.type: direct in %s to connect without a proxy)", err, path)
 	}
 	return nil
-}
-
-// New builds the host over the config the process started with and the app key
-// it resolved. The key is handed in rather than read from the config: it is
-// settled from the file and from how the binary was built, and the file alone
-// does not know the second (#239).
-func New(cfgStore *config.Store, key appkey.Key, log *zap.Logger, verbose bool, trace bool) (*App, error) {
-	start, err := newStartup(cfgStore.Current(), key)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkRoute(start.route, cfgStore.Path(), log); err != nil {
-		return nil, err
-	}
-
-	// The temp directory is created here rather than in Run because the media
-	// cache may live inside it, and the owner needs the cache before it starts.
-	// It is the host's: it outlives the accounts that cache into it.
-	tmpDir, err := os.MkdirTemp("", "tele-*")
-	if err != nil {
-		log.Warn("failed to create temp dir for media", zap.Error(err))
-		tmpDir = ""
-	}
-	removeLegacyMediaCache(log)
-
-	a := &App{
-		cfgStore: cfgStore,
-		log:      log,
-		startup:  start,
-		connect: func(endpoint internaltg.Endpoint, stateStorage updates.StateStorage) core.Connection {
-			return internaltg.NewGotdClient(log, endpoint, stateStorage, trace)
-		},
-		notifier: newNotifier(log),
-		tmpDir:   tmpDir,
-		verbose:  verbose,
-	}
-	a.clients, a.client = newClients()
-	if _, err := a.openNext(); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func (a *App) Run() error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	// Removed last: the account stopping below may still have caches in it.
-	defer os.RemoveAll(a.tmpDir) //nolint:errcheck
-
-	km, warns := keys.MergeOverrides(keys.DefaultKeyMap(), a.cfg().KeybindingOverrides())
-	for _, w := range warns {
-		a.log.Warn("keybindings: " + w)
-	}
-	a.keyMap = km
-	acct := a.current()
-	a.noticeSeen = a.openNoticeSeen(acct)
-
-	// The client's side of the process: the model, built again by the client
-	// itself for each account that follows, and the one stream it hears the
-	// host and the owners on.
-	a.prog = tea.NewProgram(ui.NewShell(a.buildRoot(ctx, true), func() ui.RootModel {
-		return a.buildRoot(ctx, false)
-	}))
-	go a.bridge(ctx)
-	go a.listen(ctx)
-	a.launch(ctx, acct)
-
-	_, err := a.prog.Run()
-	cancel()
-	// The client is gone: nothing the host would still tell it waits for it.
-	a.client.Detach()
-	// Whichever account is running when the program ends stops here, and not
-	// while another is taking its place.
-	a.switching.Lock()
-	a.current().stop()
-	a.switching.Unlock()
-
-	// Disable OS color-scheme reports (DEC mode 2031) enabled at startup, so the
-	// terminal stops emitting report sequences to the shell after tele exits
-	// (issue #148). The program has restored the normal screen by now, so write
-	// the reset directly.
-	_, _ = fmt.Fprint(os.Stdout, ansi.ResetModeLightDark)
-
-	// Leave something in the scrollback: which build ran, as whom, and where to
-	// look afterwards. Skipped when the run failed (the error is the message) or
-	// when stdout is not a terminal, so piping tele stays clean.
-	if err == nil && term.IsTerminal(os.Stdout.Fd()) {
-		home, _ := os.UserHomeDir()
-		_, _ = fmt.Fprint(os.Stdout, a.farewell(home))
-	}
-
-	if exitErr := a.lastExitErr(); exitErr != nil && err == nil {
-		return fmt.Errorf("telegram: %w", exitErr)
-	}
-	return err
 }

@@ -9,8 +9,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/sorokin-vladimir/tele/internal/appkey"
+	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/store"
 	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
 	"github.com/sorokin-vladimir/tele/internal/ui/media"
@@ -44,27 +46,26 @@ type afterReload struct {
 func startNextAfterReload(t *testing.T, key appkey.Key, setting, before, after string) afterReload {
 	t.Helper()
 	h := newTestHost(t, &loggedOutConnection{updates: make(chan store.Event)}, key, before)
-	a := h.app
 	<-h.endpoints
-	was, _ := a.cfgStore.Value(setting)
+	was, _ := h.host.cfgStore.Value(setting)
 	require.NoError(t, os.WriteFile(h.path, []byte(after), 0o600))
-	_, err := a.reloadConfig()
+	_, err := h.host.Reload()
 	require.NoError(t, err)
-	now, _ := a.cfgStore.Value(setting)
+	now, _ := h.host.cfgStore.Value(setting)
 	require.NotEqual(t, was, now, "the reload did not change %s", setting)
 
-	first := a.current()
+	first := h.host.current()
 	firstDatabase := databaseFile(t, first)
 	ctx, cancel := context.WithCancel(context.Background())
-	a.launch(ctx, first)
-	waitForEnd(t, a, first)
+	h.host.launch(ctx, first)
+	waitForEnd(t, h, first)
 	var endpoint internaltg.Endpoint
 	select {
 	case endpoint = <-h.endpoints:
 	case <-time.After(3 * time.Second):
 		require.Fail(t, "the next account never connected")
 	}
-	next := a.current()
+	next := h.host.current()
 	t.Cleanup(cancel)
 	return afterReload{rig: h, first: first, next: next, firstDatabase: firstDatabase, endpoint: endpoint}
 }
@@ -88,7 +89,7 @@ func TestHost_AReloadReachesTheOwnerOfTheAccountRunningNow(t *testing.T) {
 		"ui:\n  history_limit: 30\n", "ui:\n  history_limit: 40\n")
 	require.NoError(t, os.WriteFile(r.rig.path, []byte("ui:\n  history_limit: 70\n"), 0o600))
 
-	_, err := r.rig.app.reloadConfig()
+	_, err := r.rig.host.Reload()
 	require.NoError(t, err)
 
 	assert.Equal(t, 70, r.next.owner.Config().UI.HistoryLimit)
@@ -180,10 +181,22 @@ func TestTakesHold_proxy_secret(t *testing.T) {
 	assert.Equal(t, r.first.startup.route, r.next.startup.route)
 }
 
+// How images are drawn is the client's, settled when the client starts: a
+// reload keeps the file's new value for the next start, and every model the
+// client builds meanwhile - for the next account too - draws as it started.
 func TestTakesHold_photos_mode(t *testing.T) {
-	r := startNextAfterReload(t, startupKey, "photos.mode", "photos:\n  mode: kitty\n", "photos:\n  mode: blocks\n")
+	path := filepath.Join(t.TempDir(), "config.yml")
+	require.NoError(t, os.WriteFile(path, []byte("photos:\n  mode: kitty\n"), 0o600))
+	store, err := config.NewStore(path, t.TempDir())
+	require.NoError(t, err)
+	c := NewClient(ClientConfig{Store: store, Log: zap.NewNop()})
+	t.Cleanup(func() { _ = os.RemoveAll(c.tmpDir) })
 
-	assert.Equal(t, media.ModeKitty, r.next.startup.imageMode)
+	require.NoError(t, os.WriteFile(path, []byte("photos:\n  mode: blocks\n"), 0o600))
+	require.NoError(t, store.Reload())
+	require.Equal(t, "blocks", store.Current().Photos.Mode)
+
+	assert.Equal(t, media.ModeKitty, c.imageMode)
 }
 
 func TestTakesHold_photos_disk_cache_size(t *testing.T) {

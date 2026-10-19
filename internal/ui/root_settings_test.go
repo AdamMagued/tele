@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,6 +42,22 @@ func TestRoot_CommaOpensTheSettingsOverlay(t *testing.T) {
 	assert.True(t, m.SettingsOpen())
 	require.NotNil(t, m.Settings())
 	assert.NotEmpty(t, m.Settings().LinesForTest())
+}
+
+// A tele attached to another one's host opens the overlay with the host's
+// settings left to the host, naming the file it reads them from (#208).
+func TestRoot_AttachedTheOverlayLeavesTheHostsSettingsToTheHost(t *testing.T) {
+	m := settingsRoot(t).WithHostConfig("/home/ada/.config/tele/host.yml")
+
+	m = press(t, m, ',')
+
+	var row string
+	for _, l := range m.Settings().LinesForTest() {
+		if strings.Contains(l, "Notification preview") {
+			row = l
+		}
+	}
+	assert.Contains(t, row, "read-only")
 }
 
 // While it is open it owns the keys, the way the help modal does: it is a

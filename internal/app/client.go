@@ -1,0 +1,241 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"syscall"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/term"
+	"go.uber.org/zap"
+
+	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/notices"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
+	"github.com/sorokin-vladimir/tele/internal/ui"
+	"github.com/sorokin-vladimir/tele/internal/ui/keys"
+	"github.com/sorokin-vladimir/tele/internal/ui/media"
+	"github.com/sorokin-vladimir/tele/internal/ui/screens"
+)
+
+// Attachment is a client's link to its host: the owner's surface, the stream
+// it is told everything on, and the end of the link when the client goes.
+type Attachment interface {
+	core.Surface
+	Stream() <-chan any
+}
+
+// ClientConfig is what a client is made from.
+type ClientConfig struct {
+	// Store is the config file the client reads its own settings from.
+	Store *config.Store
+	Log   *zap.Logger
+	// Attachment is the client's link to its host, and Detach ends it.
+	Attachment Attachment
+	Detach     func()
+	// Reload re-reads the settings the client and its host read, and returns
+	// the config the client applies to itself.
+	Reload func() (*config.Config, error)
+	// HostConfig is the config file the host reads when the host is another
+	// tele's: its settings are then shown and not changed from here. Empty
+	// when the host is in this process (#208).
+	HostConfig string
+	// StateDir is where the machine's record of the notices shown is kept.
+	StateDir string
+	// Notices are the one-time notices this start may show.
+	Notices       []notices.Notice
+	ThemeWarnings []string
+	LogPath       string
+	Verbose       bool
+}
+
+// Client draws the account its host is running, one account after another,
+// and is driven from the keyboard. It reaches the owner of the moment only
+// through its attachment, whether the host is in this process or another
+// (#208).
+type Client struct {
+	c ClientConfig
+	// imageMode is how images are drawn, settled when the client starts: a
+	// renderer swapped under images already sent to the terminal is a mess,
+	// not a setting taking effect (#239).
+	imageMode media.Mode
+
+	// prog draws whichever account is running; keyMap and noticeSeen are the
+	// person's and the machine's, so every account's model shares them.
+	prog       *tea.Program
+	keyMap     keys.KeyMap
+	noticeSeen notices.Seen
+	// tmpDir holds the client's scratch files: what a model saved to show the
+	// person. screens counts the models built, and screenDir is the directory
+	// of the one on screen, which the next one's replaces.
+	tmpDir    string
+	screens   uint64
+	screenDir string
+
+	// What the client heard of the account, for after the program ends: who
+	// it was logged in as, for the farewell, and what its connection ended
+	// with, for the exit code. Both come over the stream, as everything the
+	// client knows does.
+	heardMu sync.Mutex
+	user    project.LoggedInUser
+	ended   *telerr.Error
+}
+
+// NewClient makes a client from c. Nothing is drawn until Run.
+func NewClient(c ClientConfig) *Client {
+	tmpDir, err := os.MkdirTemp("", "tele-client-*")
+	if err != nil {
+		c.Log.Warn("no scratch directory for the client", zap.Error(err))
+		tmpDir = ""
+	}
+	return &Client{
+		c:         c,
+		imageMode: media.DetectMode(c.Store.Current().Photos.Mode, os.Getenv),
+		tmpDir:    tmpDir,
+	}
+}
+
+// Run draws until the person quits or the process is told to stop, and ends
+// the client's attachment when it does.
+func (c *Client) Run() error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	defer func() {
+		if c.tmpDir != "" {
+			_ = os.RemoveAll(c.tmpDir)
+		}
+	}()
+
+	km, warns := keys.MergeOverrides(keys.DefaultKeyMap(), c.c.Store.Current().KeybindingOverrides())
+	for _, w := range warns {
+		c.c.Log.Warn("keybindings: " + w)
+	}
+	c.keyMap = km
+	c.noticeSeen, _ = notices.NewFileSeen(filepath.Join(c.c.StateDir, NoticesFile))
+
+	c.prog = tea.NewProgram(ui.NewShell(c.buildRoot(ctx, true), func() ui.RootModel {
+		return c.buildRoot(ctx, false)
+	}))
+	go c.bridge(ctx)
+
+	_, err := c.prog.Run()
+	cancel()
+	c.c.Detach()
+
+	// Disable OS color-scheme reports (DEC mode 2031) enabled at startup, so the
+	// terminal stops emitting report sequences to the shell after tele exits
+	// (issue #148). The program has restored the normal screen by now, so write
+	// the reset directly.
+	_, _ = fmt.Fprint(os.Stdout, ansi.ResetModeLightDark)
+
+	// Leave something in the scrollback: which build ran, as whom, and where to
+	// look afterwards. Skipped when the run failed (the error is the message) or
+	// when stdout is not a terminal, so piping tele stays clean.
+	if err == nil && term.IsTerminal(os.Stdout.Fd()) {
+		home, _ := os.UserHomeDir()
+		_, _ = fmt.Fprint(os.Stdout, c.farewell(home))
+	}
+	if ended := c.exitErr(); ended != nil && err == nil {
+		return fmt.Errorf("telegram: %w", ended)
+	}
+	return err
+}
+
+// buildRoot builds a model for whichever account the client is attached to.
+// The person's things - config, key map, log path - are shared; what the
+// model saves to show the person goes in a scratch directory of its own, which
+// the next model's replaces. The one-time startup notices belong to the start
+// of the process, so only the first model has them.
+func (c *Client) buildRoot(ctx context.Context, first bool) ui.RootModel {
+	cfg := c.c.Store.Current()
+	root := ui.NewRootModel(c.c.Verbose)
+	root = root.WithContext(ctx).WithImageMode(c.imageMode).WithConfig(cfg).WithKeyMap(c.keyMap).WithOwner(c.c.Attachment).
+		WithLogger(c.c.Log).WithConfigReload(c.c.Reload).WithSettingsStore(c.c.Store).WithLogPath(c.c.LogPath).
+		WithHostConfig(c.c.HostConfig)
+	root.SetLoginModel(screens.NewLoginModel())
+	root.SetTmpDir(c.nextScreenDir())
+	if first {
+		// Seen-state is written on dismissal, so quitting before the countdown
+		// ends shows the notice again next time (#197).
+		root = root.WithNotices(notices.Pending(c.c.Notices, c.noticeSeen), c.noticeSeen)
+		// The themes loaded at startup may have been reloaded since, and a
+		// reload says what is wrong with them itself.
+		root = root.WithThemeWarnings(c.c.ThemeWarnings)
+	}
+	return root
+}
+
+// nextScreenDir makes the scratch directory of the next model and removes the
+// last one's: documents opened and photos saved for an account that ended are
+// that account's, and must not outlive it on disk.
+func (c *Client) nextScreenDir() string {
+	if c.tmpDir == "" {
+		return ""
+	}
+	if c.screenDir != "" {
+		_ = os.RemoveAll(c.screenDir)
+	}
+	c.screens++
+	dir := filepath.Join(c.tmpDir, "screen-"+strconv.FormatUint(c.screens, 10))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		c.c.Log.Warn("no scratch directory for the screen", zap.Error(err))
+		dir = ""
+	}
+	c.screenDir = dir
+	return dir
+}
+
+// bridge carries the stream to the model for the life of the client: deltas
+// and events from whichever owner the client is seated at, and what the host
+// tells it. The stream is one and ordered, so whatever arrives after the news
+// that an account ended belongs to the next one.
+func (c *Client) bridge(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-c.c.Attachment.Stream():
+			if !ok {
+				return
+			}
+			c.hear(msg)
+			c.prog.Send(msg)
+		}
+	}
+}
+
+// hear keeps what the client needs from msg once the program has ended: who
+// the account is logged in as, and what its connection ended with. The end of
+// an account forgets both, since they were that account's.
+func (c *Client) hear(msg any) {
+	c.heardMu.Lock()
+	defer c.heardMu.Unlock()
+	switch m := msg.(type) {
+	case project.Delta:
+		if m.Account != nil {
+			c.user = m.Account.Contents.LoggedInUser
+			c.ended = m.Account.Contents.Ended
+		}
+	case core.AccountEnded:
+		c.user, c.ended = project.LoggedInUser{}, nil
+	}
+}
+
+// exitErr is what the account's connection ended with, nil while it ran or
+// when the account ended with a log out.
+func (c *Client) exitErr() error {
+	c.heardMu.Lock()
+	defer c.heardMu.Unlock()
+	if c.ended == nil {
+		return nil
+	}
+	return c.ended
+}

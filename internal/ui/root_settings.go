@@ -21,6 +21,9 @@ func (m RootModel) openSettings() (RootModel, tea.Cmd) {
 		return m, nil
 	}
 	m.settings = components.NewSettingsModal(m.settingsStore, m.keyMap, keys.DefaultKeyMap(), m.width, m.height)
+	if m.hostConfig != "" {
+		m.settings.HeldByHost(m.hostConfig)
+	}
 	return m, nil
 }
 

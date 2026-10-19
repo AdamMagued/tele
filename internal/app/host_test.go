@@ -17,6 +17,10 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/hosting"
+	"github.com/sorokin-vladimir/tele/internal/ipc"
+	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
+	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/store"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	internaltg "github.com/sorokin-vladimir/tele/internal/tg"
@@ -51,23 +55,25 @@ func (c *bannedConnection) Connect(context.Context, *internaltg.AuthFlow,
 func (c *bannedConnection) Updates() <-chan store.Event { return c.updates }
 
 // testHost is a host over a fresh state directory whose first account is
-// logged out as soon as it connects, and whose next one stays connected.
-func testHost(t *testing.T) (*App, string) {
+// logged out as soon as it connects, and whose next one stays connected, with
+// a client attached to it over a socket.
+func testHost(t *testing.T) testHostRig {
 	t.Helper()
 	return testHostWith(t, &loggedOutConnection{updates: make(chan store.Event)})
 }
 
 // testHostWith is testHost with first as the first account's connection.
-func testHostWith(t *testing.T, first core.Connection) (*App, string) {
+func testHostWith(t *testing.T, first core.Connection) testHostRig {
 	t.Helper()
-	h := newTestHost(t, first, appkey.Key{}, "ui:\n  history_limit: 30\n")
-	return h.app, h.app.startup.sessionFile
+	return newTestHost(t, first, appkey.Key{}, "ui:\n  history_limit: 30\n")
 }
 
 // testHostRig is a host over a real config file and a fresh state directory,
-// with what its accounts were handed.
+// with what its accounts were handed, and a client attached to it the way
+// every client is: over the endpoint (#208).
 type testHostRig struct {
-	app *App
+	host   *Host
+	client *dial.Attachment
 	// endpoints receives what each account's connection was made with.
 	endpoints chan internaltg.Endpoint
 	// path is the config file, and stateDir the platform state directory.
@@ -93,12 +99,12 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 	h := testHostRig{endpoints: make(chan internaltg.Endpoint, 8), path: path, stateDir: stateDir}
 	var mu sync.Mutex
 	opened := 0
-	h.app = &App{
+	h.host = &Host{
 		cfgStore: config.NewStoreOf(cfg, path, stateDir),
 		startup:  start,
 		log:      zap.NewNop(),
 		notifier: newNotifier(zap.NewNop()),
-		tmpDir:   t.TempDir(),
+		clients:  hosting.NewClients(),
 		connect: func(endpoint internaltg.Endpoint, _ updates.StateStorage) core.Connection {
 			h.endpoints <- endpoint
 			mu.Lock()
@@ -110,31 +116,40 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 			return &heldConnection{updates: make(chan store.Event)}
 		},
 	}
-	h.app.clients, h.app.client = newClients()
-	_, err = h.app.openNext()
+	_, err = h.host.openNext()
 	require.NoError(t, err)
-	// Runs before the temp directories are removed: an account's database
-	// still open then cannot be removed on Windows.
-	t.Cleanup(func() {
-		h.app.client.Detach()
-		h.app.switching.Lock()
-		defer h.app.switching.Unlock()
-		h.app.current().stop()
-	})
+	// Runs last, before the temp directories are removed: an account's
+	// database still open then cannot be removed on Windows.
+	t.Cleanup(h.host.Stop)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reached, err := hosting.Reach(ctx, "tele-test", t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(reached.Close)
+	srv := hosting.Serve(context.Background(), reached.Listener, testHello, h.host.clients)
+	t.Cleanup(func() { srv.Stop(time.Second) })
+	conn, err := ipc.Dial(ctx, reached.Endpoint)
+	require.NoError(t, err)
+	h.client, err = dial.Dial(ctx, conn, testHello)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = h.client.Close() })
 	return h
 }
+
+var testHello = wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev"}
 
 // waitForEnd waits for the client to hear that an account ended, and then for
 // the next one to be open in its place. Whatever the host could not do on the
 // way - remove the account, open the next - fails the test with what it said,
 // rather than with a timeout that says nothing.
-func waitForEnd(t *testing.T, a *App, ended *account) core.AccountEnded {
+func waitForEnd(t *testing.T, h testHostRig, ended *account) core.AccountEnded {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
 	var news core.AccountEnded
 	for heard := false; !heard; {
 		select {
-		case msg := <-a.client.Stream():
+		case msg := <-h.client.Stream():
 			if failed, ok := msg.(core.HostFailure); ok {
 				require.FailNow(t, "the host failed before the account ended", "%v", failed.Err)
 			}
@@ -143,9 +158,9 @@ func waitForEnd(t *testing.T, a *App, ended *account) core.AccountEnded {
 			require.FailNow(t, "the account never ended")
 		}
 	}
-	for a.current() == ended {
+	for h.host.current() == ended {
 		select {
-		case msg := <-a.client.Stream():
+		case msg := <-h.client.Stream():
 			if failed, ok := msg.(core.HostFailure); ok {
 				require.FailNow(t, "the next account was not opened", "%v", failed.Err)
 			}
@@ -161,20 +176,20 @@ func waitForEnd(t *testing.T, a *App, ended *account) core.AccountEnded {
 // in its place, with nothing of the last one on disk - not its history, not its
 // session - and the client hears why (#297).
 func TestHost_ALogOutStartsTheNextAccountWithNothingOfTheLast(t *testing.T) {
-	a, sessionFile := testHost(t)
-	first := a.current()
+	h := testHost(t)
+	first := h.host.current()
 	_, err := first.store.DB().Exec(`INSERT OR REPLACE INTO metadata (key, value) VALUES ('mark', 'first')`)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first)
-	ended := waitForEnd(t, a, first)
+	h.host.launch(ctx, first)
+	ended := waitForEnd(t, h, first)
 
 	assert.Equal(t, core.AccountEnded{Reason: core.EndLoggedOutElsewhere}, ended)
-	assert.NoFileExists(t, sessionFile, "a login would bind to the old key")
+	assert.NoFileExists(t, h.host.startup.sessionFile, "a login would bind to the old key")
 
-	next := a.current()
+	next := h.host.current()
 	var v string
 	err = next.store.DB().QueryRow(`SELECT value FROM metadata WHERE key = 'mark'`).Scan(&v)
 	assert.Error(t, err, "the next account found the last one's data")
@@ -184,17 +199,17 @@ func TestHost_ALogOutStartsTheNextAccountWithNothingOfTheLast(t *testing.T) {
 // is seated at the next owner, and what the client asks reaches that one
 // (#309).
 func TestHost_TheClientIsSeatedAtTheNextAccount(t *testing.T) {
-	a, _ := testHost(t)
-	first := a.current()
+	h := testHost(t)
+	first := h.host.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first)
-	waitForEnd(t, a, first)
+	h.host.launch(ctx, first)
+	waitForEnd(t, h, first)
 
-	a.client.Subscribe(project.AccountWindow{})
+	h.client.Subscribe(project.AccountWindow{})
 
 	select {
-	case msg := <-a.client.Stream():
+	case msg := <-h.client.Stream():
 		d, ok := msg.(project.Delta)
 		require.True(t, ok, "the next owner answers the subscription, got %T", msg)
 		require.NotNil(t, d.Account)
@@ -204,40 +219,37 @@ func TestHost_TheClientIsSeatedAtTheNextAccount(t *testing.T) {
 }
 
 // A banned account's connection is over before the person decides anything.
-// Leaving it to log in with another number is the client's request, and ends
-// the account like any log out; what the banned one ended with is no longer
-// the process's exit error (#297).
+// Leaving it to log in with another number is the client's request, made over
+// its connection, and ends the account like any log out (#297).
 func TestHost_LeavingABannedAccountStartsTheNextOne(t *testing.T) {
-	a, _ := testHostWith(t, &bannedConnection{updates: make(chan store.Event)})
-	first := a.current()
+	h := testHostWith(t, &bannedConnection{updates: make(chan store.Event)})
+	first := h.host.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go a.listen(ctx)
-	a.launch(ctx, first)
-	require.Eventually(t, func() bool { return a.lastExitErr() != nil }, 2*time.Second, 5*time.Millisecond)
+	h.host.Start(ctx)
+	require.Eventually(t, func() bool { return first.owner.Account().Ended != nil }, 2*time.Second, 5*time.Millisecond)
 
-	a.client.EndAccount(core.EndBanned)
-	ended := waitForEnd(t, a, first)
+	h.client.EndAccount(core.EndBanned)
+	ended := waitForEnd(t, h, first)
 
 	assert.Equal(t, core.EndBanned, ended.Reason)
-	assert.NoError(t, a.lastExitErr())
 }
 
 // Only the account running now can end. Asked twice - the connection and the
 // client both, or a request arriving late - the second must not take the next
 // account with it.
 func TestHost_AnAccountEndsOnce(t *testing.T) {
-	a, _ := testHost(t)
-	first := a.current()
+	h := testHost(t)
+	first := h.host.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first)
-	waitForEnd(t, a, first)
-	next := a.current()
+	h.host.launch(ctx, first)
+	waitForEnd(t, h, first)
+	next := h.host.current()
 
-	a.endAccount(ctx, first, core.EndBanned)
+	h.host.endAccount(ctx, first, core.EndBanned)
 
-	assert.Same(t, next, a.current(), "the next account is still the one running")
+	assert.Same(t, next, h.host.current(), "the next account is still the one running")
 	_, err := next.store.DB().Exec(`SELECT 1`)
 	assert.NoError(t, err, "and it was not stopped")
 }
@@ -248,16 +260,15 @@ func TestHost_AnAccountEndsOnce(t *testing.T) {
 func TestHost_TheNextAccountConnectsWithTheBuiltInKeyAfterAReload(t *testing.T) {
 	builtIn := appkey.Key{ID: 4242, Hash: "built-in"}
 	h := newTestHost(t, &loggedOutConnection{updates: make(chan store.Event)}, builtIn, "ui:\n  history_limit: 30\n")
-	a := h.app
 	<-h.endpoints // the first account's
-	_, err := a.reloadConfig()
+	_, err := h.host.Reload()
 	require.NoError(t, err)
 
-	first := a.current()
+	first := h.host.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a.launch(ctx, first)
-	waitForEnd(t, a, first)
+	h.host.launch(ctx, first)
+	waitForEnd(t, h, first)
 
 	select {
 	case endpoint := <-h.endpoints:

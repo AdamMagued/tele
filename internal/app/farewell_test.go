@@ -5,7 +5,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+
+	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
 func TestFarewellBanner_FullInfo(t *testing.T) {
@@ -60,11 +63,24 @@ func TestAccountLabel(t *testing.T) {
 	assert.Equal(t, "", accountLabel(0, ""), "no authenticated account yet")
 }
 
-func TestApp_SelfIdentity_RecordedFromAuth(t *testing.T) {
-	var a App
-	a.setSelf(42, "sorokin")
+// What a client leaves behind when it exits comes from what it heard over its
+// attachment, as everything a client knows does (#208): the farewell names the
+// account it was logged in as, and the exit code says what the account's
+// connection ended with. An account that ended takes both with it.
+func TestClient_TheFarewellAndTheExitAreWhatItHeard(t *testing.T) {
+	c := &Client{}
+	failed := &telerr.Error{Kind: telerr.Network, Detail: "connection refused"}
 
-	id, name := a.self()
-	require.Equal(t, int64(42), id)
-	assert.Equal(t, "sorokin", name)
+	c.hear(project.Delta{Account: &project.AccountDelta{Contents: project.AccountContents{
+		LoggedInUser: project.LoggedInUser{ID: 42, Username: "sorokin"},
+		Ended:        failed,
+	}}})
+
+	assert.Contains(t, c.farewell(""), "@sorokin")
+	assert.Equal(t, error(failed), c.exitErr())
+
+	c.hear(core.AccountEnded{Reason: core.EndLoggedOutHere})
+
+	assert.NotContains(t, c.farewell(""), "@sorokin")
+	assert.NoError(t, c.exitErr())
 }

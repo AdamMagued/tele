@@ -69,9 +69,11 @@ func shortenHome(path, home string) string {
 	return path
 }
 
-// farewell renders the banner for this run, or "" when there is nothing worth
-// leaving behind.
-func (a *App) farewell(home string) string {
-	id, username := a.self()
-	return farewellBanner(version.Version, accountLabel(id, username), shortenHome(a.logPath, home))
+// farewell renders the banner for this run, naming the account as the client
+// last heard it.
+func (c *Client) farewell(home string) string {
+	c.heardMu.Lock()
+	user := c.user
+	c.heardMu.Unlock()
+	return farewellBanner(version.Version, accountLabel(user.ID, user.Username), shortenHome(c.c.LogPath, home))
 }

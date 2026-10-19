@@ -120,6 +120,10 @@ type RootModel struct {
 	// rather than the config store itself, because the overlay is shaped for a
 	// second one - the Telegram account - to arrive beside it (ADR 0010).
 	settingsStore settings.Store
+	// hostConfig is the config file the host reads when the host is another
+	// tele's, whose settings the overlay then shows and does not change. Empty
+	// when the host is in this process (#208).
+	hostConfig string
 	// configWarnings are the non-fatal config notices, shown as toasts once the
 	// TUI is up. They are also logged and printed to stderr, but stderr is wiped
 	// by the alt-screen a moment later, so on their own those two amount to
@@ -286,6 +290,13 @@ func (m RootModel) WithFocus(f Focus) RootModel {
 // goroutines against a tearing-down client.
 func (m RootModel) WithContext(ctx context.Context) RootModel {
 	m.ctx = ctx
+	return m
+}
+
+// WithHostConfig says the host is another tele's, reading its settings from
+// file: the overlay shows them and does not change them.
+func (m RootModel) WithHostConfig(file string) RootModel {
+	m.hostConfig = file
 	return m
 }
 

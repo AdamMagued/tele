@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/app"
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/statedir"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 	"github.com/sorokin-vladimir/tele/internal/ui/theme"
@@ -162,16 +165,37 @@ func main() {
 		log.Info("cleared local state before startup", zap.String("reason", string(cleanupReason)))
 	}
 
-	a, err := app.New(cfgStore, key, log, *verbose, *trace)
+	clients := hosting.NewClients()
+	att := core.NewAttachment()
+	leave := clients.Add(att)
+	host, err := app.NewHost(cfgStore, key, log, *trace, clients)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "init: %v\n", err)
 		os.Exit(1)
 	}
-	a.SetStateMoved(stateMoved)
-	a.SetThemeWarnings(themes.Warnings)
-	a.SetLogPath(logPath)
-	if err := a.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	hostCtx, stopHost := context.WithCancel(context.Background())
+	host.Start(hostCtx)
+
+	client := app.NewClient(app.ClientConfig{
+		Store:      cfgStore,
+		Log:        log,
+		Attachment: att,
+		Detach: func() {
+			att.Detach()
+			leave()
+		},
+		Reload:        host.Reload,
+		StateDir:      cfg.StateDir,
+		Notices:       app.StartupNotices(cfg.StateDir, stateMoved, cfg.SessionPinned),
+		ThemeWarnings: themes.Warnings,
+		LogPath:       logPath,
+		Verbose:       *verbose,
+	})
+	runErr := client.Run()
+	stopHost()
+	host.Stop()
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", runErr)
 		os.Exit(1)
 	}
 }
