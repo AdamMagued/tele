@@ -182,7 +182,9 @@ func call[T any](a *Attachment, ctx context.Context, fn func(context.Context, *s
 		cancel()
 	}()
 	v, err := fn(cctx, s)
-	if s.hasLeft() {
+	// calls ends before the seat is marked left, so a call cut off by the end
+	// can return in between: either one means the owner is gone.
+	if s.hasLeft() || calls.Err() != nil {
 		return zero, accountEnded()
 	}
 	return v, err
