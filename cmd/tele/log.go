@@ -16,8 +16,9 @@ import (
 // logs to tele-client.log, and tags every line with its pid: two windows on
 // one host are two processes, and one file rotated by both would lose lines
 // (#208). Two such windows still share that file; rotating it from both is
-// rare enough to accept.
-func openLog(dir string, hosting, verbose bool) (*zap.Logger, string) {
+// rare enough to accept. close closes the file, which Windows will not let
+// anyone remove while it is open.
+func openLog(dir string, hosting, verbose bool) (log *zap.Logger, path string, close func() error) {
 	level := zap.NewAtomicLevelAt(zap.InfoLevel)
 	if verbose {
 		level = zap.NewAtomicLevelAt(zap.DebugLevel)
@@ -26,23 +27,23 @@ func openLog(dir string, hosting, verbose bool) (*zap.Logger, string) {
 	if !hosting {
 		name = "tele-client.log"
 	}
-	path := filepath.Join(dir, name)
-	w := zapcore.AddSync(&lumberjack.Logger{
+	path = filepath.Join(dir, name)
+	file := &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    10,
 		MaxBackups: 3,
 		Compress:   false,
-	})
+	}
 	core := zapcore.NewCore(
 		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		w,
+		zapcore.AddSync(file),
 		level,
 	)
 	// Every line is tagged with the release it came from: a log excerpt from a
 	// user is otherwise impossible to attribute to a build.
-	log := zap.New(core).With(zap.String("v", version.Version))
+	log = zap.New(core).With(zap.String("v", version.Version))
 	if !hosting {
 		log = log.With(zap.Int("pid", os.Getpid()))
 	}
-	return log, path
+	return log, path, file.Close
 }

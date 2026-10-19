@@ -59,6 +59,13 @@ func RemoveStale(ep Endpoint) error {
 // a host that is there and refuses, a socket that is not the user's - is
 // returned as it is, since it is no invitation to become the host.
 func Dial(ctx context.Context, ep Endpoint) (net.Conn, error) {
+	// No socket file is nobody there, said before the dial rather than read
+	// from what it fails with: on Windows, dialling into a directory that does
+	// not exist yet - the socket's own, made only by a host - fails as a dead
+	// network, which says nothing of a host.
+	if _, err := os.Lstat(ep.Path); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %s", ErrNoHost, ep.Path)
+	}
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", ep.Path)
 	if err == nil {

@@ -15,7 +15,8 @@ import (
 func TestOpenLog_AClientLogsApartAndSaysWhoItIs(t *testing.T) {
 	dir := t.TempDir()
 
-	log, path := openLog(dir, false, false)
+	log, path, closeLog := openLog(dir, false, false)
+	t.Cleanup(func() { _ = closeLog() })
 	log.Info("hello")
 	_ = log.Sync()
 
@@ -35,7 +36,8 @@ func TestOpenLog_AClientLogsApartAndSaysWhoItIs(t *testing.T) {
 func TestOpenLog_TheHostLogsWhereItAlwaysHas(t *testing.T) {
 	dir := t.TempDir()
 
-	_, path := openLog(dir, true, false)
+	_, path, closeLog := openLog(dir, true, false)
+	t.Cleanup(func() { _ = closeLog() })
 
 	if path != filepath.Join(dir, "tele.log") {
 		t.Fatalf("the host logs to %s", path)

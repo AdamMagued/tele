@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,25 @@ func TestSocket_BytesCrossBothWays(t *testing.T) {
 // Nobody there is the one answer that lets a client become the host.
 func TestSocket_NobodyThereIsNoHost(t *testing.T) {
 	_, err := dial(t, endpoint(t))
+
+	assert.ErrorIs(t, err, ipc.ErrNoHost)
+}
+
+// A state directory too deep for a socket path gets its socket in a directory
+// of its own, which only a host makes. Before one has, nobody is there: on
+// Windows, dialling into a directory that does not exist reads as a dead
+// network rather than as a missing file, and a client must not take that for
+// a host that refused it.
+func TestSocket_NobodyThereBeforeTheSocketsDirectoryExists(t *testing.T) {
+	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 120))
+	require.NoError(t, os.MkdirAll(deep, 0o700))
+	ep, err := ipc.EndpointFor("tele-test", deep)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(ep.Path)) })
+	_, err = os.Stat(filepath.Dir(ep.Path))
+	require.ErrorIs(t, err, os.ErrNotExist, "the socket's own directory is not made yet")
+
+	_, err = dial(t, ep)
 
 	assert.ErrorIs(t, err, ipc.ErrNoHost)
 }

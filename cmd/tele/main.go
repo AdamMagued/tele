@@ -123,7 +123,7 @@ func main() {
 		os.Exit(1)
 	}
 	isHost := reached.Listener != nil
-	log, logPath := openLog(defaultState, isHost, *verbose)
+	log, logPath, closeLog := openLog(defaultState, isHost, *verbose)
 
 	// The log keeps every warning on every run, including the ones the TUI shows
 	// only once: suppressing a toast must not lose the record.
@@ -149,6 +149,7 @@ func main() {
 		err = r.client()
 	}
 	_ = log.Sync()
+	_ = closeLog()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
