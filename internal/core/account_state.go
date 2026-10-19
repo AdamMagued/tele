@@ -117,6 +117,12 @@ func (o *Owner) loggedIn(userID int64, username string) {
 	})
 }
 
+// historyPageIs records how many messages the owner fetches at a time, for
+// every client sizing its window by it.
+func (o *Owner) historyPageIs(n int) {
+	o.updateAccount(func(c *project.AccountContents) { c.HistoryPage = n })
+}
+
 // AnswerLogin answers, for the client from, the step of the login named by
 // seq. An answer for an asking that is no longer the one waiting - another
 // client answered first, or the step moved on - is refused, so two clients

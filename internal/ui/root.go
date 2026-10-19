@@ -358,8 +358,8 @@ func (m RootModel) applyConfig(cfg *config.Config) RootModel {
 	m.toasts.SetMaxVisible(cfg.UI.Toasts.MaxVisible)
 
 	// Next-use: what is drawn stays as it was drawn, and the new value is what
-	// the next fetch asks for and the next image is drawn at.
-	m.historyLimit = cfg.UI.HistoryLimit
+	// the next image is drawn at. How much history a window holds is not here:
+	// it is the host's setting, and arrives with the account (#208).
 	m.kittyCap = cfg.Photos.KittyPlacementCap
 	m.chat.SetMaxMediaPx(cfg.Photos.MaxLongSidePx)
 

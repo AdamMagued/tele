@@ -29,6 +29,7 @@ const proxyPrefix = "proxy."
 var registry = []settings.Entry{
 	{
 		Key:      "telegram.api_id",
+		Process:  settings.Host,
 		Group:    "telegram",
 		Label:    "API ID",
 		Help:     "The application this client signs in as, issued at my.telegram.org. Changing it is signing in as a different application, not editing a value.",
@@ -38,6 +39,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:      "telegram.api_hash",
+		Process:  settings.Host,
 		Group:    "telegram",
 		Label:    "API hash",
 		Help:     "The secret paired with the API ID. It is shown masked because it is a credential and this screen ends up in recordings.",
@@ -48,6 +50,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:      "telegram.session_file",
+		Process:  settings.Host,
 		Group:    "telegram",
 		Label:    "Session file",
 		Help:     "Where the signed-in session is kept. Derived from the state directory unless the config pinned a path of its own; deprecated in favour of state_dir.",
@@ -57,6 +60,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "proxy.type",
+		Process: settings.Host,
 		Group:   "proxy",
 		Label:   "Proxy",
 		Help:    "How tele reaches Telegram. auto leaves that to the ALL_PROXY environment variable, which is deprecated; direct puts nothing in between and ignores the variable; mtproto and socks5 use the proxy named below. Every connection takes it, media included.",
@@ -66,6 +70,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "proxy.server",
+		Process: settings.Host,
 		Group:   "proxy",
 		Label:   "Proxy server",
 		Help:    "The host the proxy answers on. Read by the mtproto and socks5 types; under any other type it is read by nothing, which tele says at launch rather than leaving you to believe it is in use.",
@@ -73,10 +78,11 @@ var registry = []settings.Entry{
 		Applies: settings.Startup,
 	},
 	{
-		Key:   "proxy.port",
-		Group: "proxy",
-		Label: "Proxy port",
-		Help:  "The port the proxy answers on. Zero is not a port: it is what the file says when no proxy is configured, and a type that dials somebody is refused without a real one.",
+		Key:     "proxy.port",
+		Process: settings.Host,
+		Group:   "proxy",
+		Label:   "Proxy port",
+		Help:    "The port the proxy answers on. Zero is not a port: it is what the file says when no proxy is configured, and a type that dials somebody is refused without a real one.",
 		// Zero is legal here and only here, because it is how absence is
 		// spelled for a number. What makes it legal in the file is not what
 		// makes it usable: proxy.Parse wants 1 to 65535 the moment the type
@@ -88,6 +94,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "proxy.secret",
+		Process: settings.Host,
 		Group:   "proxy",
 		Label:   "Proxy secret",
 		Help:    "What an mtproto proxy asks a client to prove it knows, written the way the proxy published it - hex or base64url, both are read. It is shown masked because it is a credential and this screen ends up in recordings.",
@@ -97,6 +104,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "proxy.username",
+		Process: settings.Host,
 		Group:   "proxy",
 		Label:   "Proxy username",
 		Help:    "Who tele says it is to a socks5 proxy that asks. A proxy is given a username and a password together or neither of them.",
@@ -105,6 +113,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "proxy.password",
+		Process: settings.Host,
 		Group:   "proxy",
 		Label:   "Proxy password",
 		Help:    "The password paired with the proxy username. Masked for the same reason the API hash is.",
@@ -113,7 +122,8 @@ var registry = []settings.Entry{
 		Secret:  true,
 	},
 	{
-		Key: "state_dir",
+		Key:     "state_dir",
+		Process: settings.Host,
 		// The file's root has no section name. The overlay titles this group
 		// after the file itself.
 		Group:    "",
@@ -125,6 +135,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.history_limit",
+		Process: settings.Host,
 		Group:   "ui",
 		Label:   "History limit",
 		Help:    "How many messages are asked for when a chat is opened or scrolled back. What is already loaded stays loaded; the new value is what the next fetch asks for.",
@@ -136,6 +147,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.confirm_quit",
+		Process: settings.Client,
 		Group:   "ui",
 		Label:   "Confirm before quitting",
 		Help:    "Whether q, ctrl+c and ctrl+q ask before closing tele. Off quits at once, as it always has. Read at the key press, so the change takes hold immediately.",
@@ -146,6 +158,7 @@ var registry = []settings.Entry{
 		// Last of the ui keys, where every template tele has ever written puts
 		// it, so the overlay and the file read in the same order.
 		Key:     "ui.theme",
+		Process: settings.Client,
 		Group:   "ui",
 		Label:   "Theme",
 		Help:    "The theme to use. A name uses that theme against either terminal background; a dark/light pair uses one per background. Kept in the spelling you wrote: naming one theme stays one row, naming a pair stays two.",
@@ -155,6 +168,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.notifications.desktop",
+		Process: settings.Host,
 		Group:   "ui.notifications",
 		Label:   "Desktop notifications",
 		Help:    "Whether a notification is handed to the operating system, where it outlives tele not being on screen. Off leaves the in-app toast alone, and neither switch touches the chat list: the row still highlights and moves up.",
@@ -163,6 +177,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.notifications.toast",
+		Process: settings.Client,
 		Group:   "ui.notifications",
 		Label:   "In-app toasts",
 		Help:    "Whether a notification is drawn in a corner of tele's own window. Errors and confirmations still appear: this silences the interruption, not the reports.",
@@ -171,6 +186,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.notifications.preview",
+		Process: settings.Host,
 		Group:   "ui.notifications",
 		Label:   "Notification preview",
 		Help:    "Whether a notification carries the message text, in the desktop notification and the toast alike - the text is rendered once and both are given the same one. Off sends the sender's name and nothing else.",
@@ -179,6 +195,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.toasts.error_zone",
+		Process: settings.Client,
 		Group:   "ui.toasts",
 		Label:   "Error zone",
 		Help:    "The corner errors appear in. The bottom-left corner is not offered: it is kept for the key-press overlay.",
@@ -191,6 +208,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.toasts.notify_zone",
+		Process: settings.Client,
 		Group:   "ui.toasts",
 		Label:   "Notification zone",
 		Help:    "The corner notifications appear in. The same corner as errors is allowed; they then stack together. The bottom-left corner is not offered: it is kept for the key-press overlay.",
@@ -200,6 +218,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "ui.toasts.max_visible",
+		Process: settings.Client,
 		Group:   "ui.toasts",
 		Label:   "Max visible",
 		Help:    "How many toasts a corner shows at once. The rest are counted rather than drawn.",
@@ -211,6 +230,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "photos.eager_full_quality",
+		Process: settings.Client,
 		Group:   "photos",
 		Label:   "Eager full quality",
 		Help:    "Whether opening a chat fetches full-resolution photos in the background, so opening one is instant at the cost of traffic.",
@@ -219,6 +239,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "photos.mode",
+		Process: settings.Client,
 		Group:   "photos",
 		Label:   "Image mode",
 		Help:    "How images are drawn: auto picks Kitty graphics when the terminal supports them and block art otherwise. Read once at startup, because the renderer and everything already transmitted to the terminal are chosen from it.",
@@ -228,6 +249,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "photos.kitty_placement_cap",
+		Process: settings.Client,
 		Group:   "photos",
 		Label:   "Kitty placement cap",
 		Help:    "How many Kitty image placements stay on the terminal at once. A whole heavy chat exceeds the terminal's own limit and corrupts placements, so only on-screen images and a few recently scrolled past stay transmitted. Lower it if images still corrupt.",
@@ -239,6 +261,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "photos.max_long_side_px",
+		Process: settings.Client,
 		Group:   "photos",
 		Label:   "Max long side",
 		Help:    "The longest side a rendered inline image is drawn at. Height is additionally bounded to a fraction of the chat pane. What is already drawn keeps the size it was drawn at.",
@@ -250,6 +273,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "photos.disk_cache_size",
+		Process: settings.Host,
 		Group:   "photos",
 		Label:   "Media cache size",
 		Help:    "How much of the on-disk media cache is kept between runs, so a chat re-renders its images instantly on restart. Zero keeps nothing: the cache moves into a temporary directory and is deleted on exit.",
@@ -259,6 +283,7 @@ var registry = []settings.Entry{
 	},
 	{
 		Key:     "avatars.disk_cache_size",
+		Process: settings.Host,
 		Group:   "avatars",
 		Label:   "Avatar cache size",
 		Help:    "How much of the on-disk avatar cache is kept between runs. Budgeted apart from chat media so a scrolling session cannot evict the faces of people you talk to.",

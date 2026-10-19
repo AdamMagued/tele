@@ -75,7 +75,7 @@ func (s *SettingsModal) activate() (*SettingsModal, SettingsResult) {
 		return s, SettingsResult{Open: true}
 	}
 	if it.readOnly() {
-		s.status = "kept in " + s.store.Origin()
+		s.status = s.keptIn(*it)
 		return s, SettingsResult{Open: true}
 	}
 	switch it.entry.Widget {
@@ -114,7 +114,7 @@ func (s *SettingsModal) reset() (*SettingsModal, SettingsResult) {
 		return s, SettingsResult{Open: true}
 	}
 	if it.readOnly() {
-		s.status = "kept in " + s.store.Origin()
+		s.status = s.keptIn(*it)
 		return s, SettingsResult{Open: true}
 	}
 	return s.commit(nil)

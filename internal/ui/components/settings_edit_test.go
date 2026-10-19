@@ -67,6 +67,24 @@ func fileContains(t *testing.T, path, needle string) bool {
 	return strings.Contains(string(raw), needle)
 }
 
+// In a tele that only attaches to another one's host, the host's settings are
+// the host's to read: a change written here would never take hold, so the row
+// cannot be changed and says which file holds it. The client's own settings
+// are edited as ever (#208).
+func TestSettingsEdit_TheHostsSettingsAreTheHostsWhenAttached(t *testing.T) {
+	m, _, path := editable(t, "")
+	m.HeldByHost("/home/ada/.config/tele/host.yml")
+
+	assert.Contains(t, rowFor(t, m, "Notification preview"), "read-only")
+	m = moveTo(t, m, "Notification preview")
+	m, changed := press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.False(t, changed)
+	assert.Contains(t, m.StatusForTest(), "host.yml")
+	assert.False(t, fileContains(t, path, "preview"))
+
+	assert.NotContains(t, rowFor(t, m, "Max visible"), "read-only")
+}
+
 // A toggle has no half-pressed state, so it commits as soon as it is pressed.
 func TestSettingsEdit_ATogglePressedWritesTheFile(t *testing.T) {
 	m, store, path := editable(t, "")

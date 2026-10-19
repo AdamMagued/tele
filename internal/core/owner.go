@@ -131,6 +131,7 @@ func New(cfg *config.Config, log *zap.Logger, st *state.State, client Connection
 	}
 	o.ctx, o.cancel = context.WithCancel(context.Background())
 	o.cfg.Store(cfg)
+	o.acct.c.HistoryPage = cfg.UI.HistoryLimit
 	o.media = newMediaFetcher(client, st, log)
 	o.avatars = newAvatarFetcher(client, log)
 	if client != nil {
@@ -177,7 +178,10 @@ func (o *Owner) Config() *config.Config { return o.cfg.Load() }
 
 // SetConfig installs a reloaded config. One store at the root, the way a theme
 // is installed: no reader can see half of a change.
-func (o *Owner) SetConfig(cfg *config.Config) { o.cfg.Store(cfg) }
+func (o *Owner) SetConfig(cfg *config.Config) {
+	o.cfg.Store(cfg)
+	o.historyPageIs(cfg.UI.HistoryLimit)
+}
 
 // SetOnAuth registers a callback fired once the account is known, so a client
 // can record the self identity. Set before Start.

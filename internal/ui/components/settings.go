@@ -39,6 +39,26 @@ type SettingsModal struct {
 	// refusal, most usefully. It is shown where the hint is, and cleared by the
 	// next key.
 	status string
+	// hostFile is the config file the host reads, when the host is another
+	// tele's: its settings are then shown and not changed from here. Empty
+	// when this tele is the host (#208).
+	hostFile string
+}
+
+// HeldByHost says that the host is another tele, reading its settings from
+// file: they are shown read-only, naming it.
+func (s *SettingsModal) HeldByHost(file string) {
+	s.hostFile = file
+	s.build()
+}
+
+// keptIn is where the setting under it is kept, for a row that cannot be
+// changed from here.
+func (s *SettingsModal) keptIn(it settingsItem) string {
+	if s.hostFile != "" && it.entry != nil && it.entry.Process == settings.Host {
+		return "kept by the tele hosting this account, in " + s.hostFile
+	}
+	return "kept in " + s.store.Origin()
 }
 
 type editState struct {
@@ -149,6 +169,11 @@ func (s *SettingsModal) build() {
 			group, first = e.Group, false
 		}
 		value, status := s.store.Value(e.Key)
+		if s.hostFile != "" && e.Process == settings.Host {
+			// The host reads its own settings, from its own file: one written
+			// here would never take hold (#208).
+			e.ReadOnly = true
+		}
 		items = append(items, settingRows(e, value, status, defaulting)...)
 	}
 

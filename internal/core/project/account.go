@@ -71,6 +71,10 @@ type AccountContents struct {
 	// LoggedInUser is who the account is logged in as, zero until Telegram
 	// has said (#208).
 	LoggedInUser LoggedInUser
+	// HistoryPage is how many messages the owner fetches at a time. It is the
+	// host's setting, and a client sizes its history window by it rather than
+	// by a setting of its own (#208).
+	HistoryPage int
 }
 
 // LoggedInUser is the user an account is logged in as.
@@ -93,7 +97,7 @@ func BuildAccount(r Reader) AccountContents { return r.Account() }
 // never crosses to one.
 func sameAccount(a, b AccountContents) bool {
 	if a.Phase != b.Phase || a.Login != b.Login || a.LoginFailed != b.LoginFailed || a.ClockSkew != b.ClockSkew ||
-		a.LoggedInUser != b.LoggedInUser {
+		a.LoggedInUser != b.LoggedInUser || a.HistoryPage != b.HistoryPage {
 		return false
 	}
 	return sameError(a.Ended, b.Ended)

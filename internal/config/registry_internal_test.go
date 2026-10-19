@@ -107,6 +107,48 @@ func TestRegistry_EntriesAreDescribed(t *testing.T) {
 	}
 }
 
+// Every setting is read by the process it belongs to, the host or the client,
+// and says which. A setting that does not would be read by both or by neither,
+// and a change to it would take hold somewhere nobody can tell (#208).
+func TestRegistry_EveryEntrySaysWhoseItIs(t *testing.T) {
+	for _, e := range registry {
+		assert.Contains(t, []settings.Process{settings.Host, settings.Client}, e.Process, "%s says nothing of whose it is", e.Key)
+	}
+}
+
+// The host's settings are what reaches Telegram and how, where the state
+// lives, what the owner keeps and fetches, and the desktop notification sink;
+// the rest are the client's. The split was settled setting by setting, so it
+// is written out here rather than derived.
+func TestRegistry_TheHostsSettings(t *testing.T) {
+	want := []string{
+		"avatars.disk_cache_size",
+		"photos.disk_cache_size",
+		"proxy.password",
+		"proxy.port",
+		"proxy.secret",
+		"proxy.server",
+		"proxy.type",
+		"proxy.username",
+		"state_dir",
+		"telegram.api_hash",
+		"telegram.api_id",
+		"telegram.session_file",
+		"ui.history_limit",
+		"ui.notifications.desktop",
+		"ui.notifications.preview",
+	}
+	var host []string
+	for _, e := range registry {
+		if e.Process == settings.Host {
+			host = append(host, e.Key)
+		}
+	}
+	slices.Sort(host)
+
+	assert.Equal(t, want, host)
+}
+
 // configKeys walks Config and returns the dotted path of every key the config
 // file can carry. Fields tagged mapstructure:"-" are derived rather than
 // configured and are not keys at all.

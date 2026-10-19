@@ -75,13 +75,6 @@ func TestTakesHold_ui_toasts_max_visible(t *testing.T) {
 		func(m RootModel) any { return m.toasts.MaxVisible() }, 7)
 }
 
-// The interface's half: how much the next chat window asks the owner for. The
-// owner's half, how much the next fetch asks Telegram for, is its own test.
-func TestTakesHold_ui_history_limit(t *testing.T) {
-	takesHoldOnReload(t, "ui.history_limit", 111,
-		func(m RootModel) any { return m.historyLimit }, 111)
-}
-
 func TestTakesHold_ui_theme(t *testing.T) {
 	takesHoldOnReload(t, "ui.theme", "nord",
 		func(RootModel) any { return theme.T().Name }, "nord")
@@ -145,14 +138,14 @@ func TestTakesHold_photos_eager_full_quality(t *testing.T) {
 // A person editing the file in another window gets the same result as a person
 // using the overlay, because both arrive the same way.
 func TestReload_PicksUpAnEditMadeOutsideTheApp(t *testing.T) {
-	m, store := applyModel(t, "ui:\n  history_limit: 50\n")
+	m, store := applyModel(t, "ui:\n  toasts:\n    max_visible: 3\n")
 
 	require.NoError(t, os.WriteFile(store.Path(), []byte(
-		"telegram:\n  api_id: 1\n  api_hash: x\nui:\n  history_limit: 175\n"), 0600))
+		"telegram:\n  api_id: 1\n  api_hash: x\nui:\n  toasts:\n    max_visible: 7\n"), 0600))
 	m, _ = m.reloadFromDisk()
 
-	assert.Equal(t, 175, m.historyLimit)
-	assert.Equal(t, 175, m.cfg.UI.HistoryLimit)
+	assert.Equal(t, 7, m.toasts.MaxVisible())
+	assert.Equal(t, 7, m.cfg.UI.Toasts.MaxVisible)
 }
 
 // A startup setting is written and kept, and the running app goes on with what
@@ -192,12 +185,12 @@ func TestReload_MovingTheZoneTakesTheToastsAlreadyShowing(t *testing.T) {
 // stopped parsing is a reason to say so, not a reason to lose the settings that
 // were working.
 func TestReload_AFailureKeepsTheRunningConfigAndSaysSo(t *testing.T) {
-	m, store := applyModel(t, "ui:\n  history_limit: 120\n")
-	require.NoError(t, os.WriteFile(store.Path(), []byte("ui:\n  history_limit: 50\n   theme: nord\n"), 0600))
+	m, store := applyModel(t, "ui:\n  toasts:\n    max_visible: 7\n")
+	require.NoError(t, os.WriteFile(store.Path(), []byte("ui:\n  toasts:\n    max_visible: 5\n   theme: nord\n"), 0600))
 
 	m, cmd := m.reloadFromDisk()
 
-	assert.Equal(t, 120, m.historyLimit, "still running on what it had")
+	assert.Equal(t, 7, m.toasts.MaxVisible(), "still running on what it had")
 	require.NotNil(t, cmd)
 	m.SettleToastsForTest()
 	zones := m.toasts.Zones()
@@ -219,11 +212,11 @@ func TestReload_AppliesAValueWrittenThroughTheStore(t *testing.T) {
 // Resetting a setting is writing absence, and absence applies like any other
 // value: the model goes back to the default.
 func TestReload_ResettingASettingAppliesTheDefault(t *testing.T) {
-	m, store := applyModel(t, "ui:\n  history_limit: 175\n")
-	require.Equal(t, 175, m.historyLimit)
+	m, store := applyModel(t, "ui:\n  toasts:\n    max_visible: 7\n")
+	require.Equal(t, 7, m.toasts.MaxVisible())
 
-	require.NoError(t, store.Set("ui.history_limit", nil))
+	require.NoError(t, store.Set("ui.toasts.max_visible", nil))
 	m, _ = m.reloadFromDisk()
 
-	assert.Equal(t, 50, m.historyLimit)
+	assert.Equal(t, 3, m.toasts.MaxVisible())
 }

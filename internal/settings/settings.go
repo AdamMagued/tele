@@ -58,6 +58,20 @@ func (w Widget) String() string {
 	return fmt.Sprintf("widget(%d)", uint8(w))
 }
 
+// Process is whose a setting is, which is the process that reads it and gives
+// it effect. Zero is no answer, so a setting that says nothing is noticed.
+type Process uint8
+
+const (
+	// Host is a setting of the host: what reaches Telegram and how, where the
+	// state lives, what the owner keeps and fetches, the desktop notification
+	// sink. A client shows it, but only the host gives it effect.
+	Host Process = iota + 1
+	// Client is a setting of a client: what it draws and how it is driven.
+	// Every client reads its own, so two clients on one host may differ.
+	Client
+)
+
 // Applicability is when a change to a setting takes hold. Three states rather
 // than two: a setting that needs no restart is not necessarily one whose effect
 // is visible at once, and telling a person to restart when they need not is as
@@ -150,6 +164,9 @@ type Entry struct {
 	Widget Widget
 	// Applies is when a change takes hold.
 	Applies Applicability
+	// Process is whose setting it is: the host's or the client's. Each
+	// process reads its own settings, and only those (#208).
+	Process Process
 	// ReadOnly marks a setting shown but not changed from here, because
 	// changing it is not editing a value. Independent of Applies: a startup
 	// setting is editable, it just does not take hold until the next start.

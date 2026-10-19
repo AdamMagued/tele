@@ -174,7 +174,7 @@ func TestPendingDownloadCmds_GIFThumb_FiresDownload(t *testing.T) {
 }
 
 func TestSaveGifFileCmd_EmitsPathOnSuccess(t *testing.T) {
-	o := newTestOwner(store.NewMemory())
+	o := newTestOwner(store.NewMemory(), 50)
 	src := filepath.Join(t.TempDir(), "anim.mp4")
 	require.NoError(t, os.WriteFile(src, []byte("mp4"), 0600))
 	o.mediaPaths[mediaPathKey{1, 10, domain.DocFull}] = src
@@ -536,6 +536,9 @@ func TestRoot_LoadMore_WidensTheChatWindow(t *testing.T) {
 	st := store.NewMemory()
 	st.SetChat(domain.Chat{ID: 1, Title: "Alice", Peer: domain.Peer{ID: 1, Type: domain.PeerUser}})
 	m := newRoot(st, 50, false).WithScreen(ui.ScreenMain)
+	// The account, which says how much history a page is, arrives before any
+	// chat is opened.
+	m = drainOwner(t, m)
 	m = openChat(t, m, 1, "Alice")
 	o := m.Owner().(*testOwner)
 

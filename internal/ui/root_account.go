@@ -24,6 +24,11 @@ func (m RootModel) handleAccountDelta(next project.AccountContents) (RootModel, 
 		cmds = append(cmds, cmd)
 	}
 
+	if next.HistoryPage != prev.HistoryPage {
+		// The window grows by a page from the next time it does; the one on
+		// screen stays as it was asked for.
+		m.historyLimit = next.HistoryPage
+	}
 	if next.LoggedInUser != prev.LoggedInUser {
 		components.SetSelfIdentity(next.LoggedInUser.ID, next.LoggedInUser.Username)
 	}

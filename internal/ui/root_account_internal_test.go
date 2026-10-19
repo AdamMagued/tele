@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/store"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui/screens"
@@ -34,6 +35,20 @@ func TestLogin_AnAnswerReachesTheOwnerWithItsAsking(t *testing.T) {
 	send()
 
 	assert.Equal(t, []screens.LoginAnswerMsg{{Seq: 7, Value: "+100"}}, o.answers)
+}
+
+// A chat window is as big as the owner's page, and grows by one page at a
+// time: how much history a page is is the host's setting, told to the client
+// with the account, not one the client reads from a file of its own (#208).
+func TestAccount_TheChatWindowIsSizedByTheOwnersPage(t *testing.T) {
+	m := newRootInternal(store.NewMemory(), 50)
+
+	m, _ = m.handleAccountDelta(project.AccountContents{HistoryPage: 30})
+	m.subscribeChat(domain.HistoryKey{ChatID: 1})
+	assert.Equal(t, 30, m.chatWindow.Before)
+
+	m.widenChatWindow()
+	assert.Equal(t, 60, m.chatWindow.Before)
 }
 
 // An answer refused because another window drives the login says so under

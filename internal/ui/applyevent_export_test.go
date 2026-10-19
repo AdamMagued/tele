@@ -98,20 +98,28 @@ type avatarPathKey struct {
 
 // storeReader lends a bare store the projection's fifth method. The real owner
 // composes the store with its send queue (#193); this stub has no queue, and an
-// empty one reads the same.
-type storeReader struct{ store.Store }
+// empty one reads the same. Its account says how much history a page is, as
+// the real owner's does.
+type storeReader struct {
+	store.Store
+	page int
+}
 
 func (storeReader) Outbox(domain.HistoryKey) []domain.OutboxEntry { return nil }
 
-func (storeReader) Account() project.AccountContents { return project.AccountContents{} }
+func (r storeReader) Account() project.AccountContents {
+	return project.AccountContents{HistoryPage: r.page}
+}
 
-func newTestOwner(st store.Store) *testOwner {
+// newTestOwner stands in for an owner over st that fetches page messages of
+// history at a time.
+func newTestOwner(st store.Store, page int) *testOwner {
 	o := &testOwner{
 		state:       state.New(st),
 		mediaPaths:  make(map[mediaPathKey]string),
 		avatarPaths: make(map[avatarPathKey]string),
 	}
-	o.reg = project.NewRegistry(storeReader{st}, o.enqueue)
+	o.reg = project.NewRegistry(storeReader{Store: st, page: page}, o.enqueue)
 	o.state.OnChange(func(chg state.Change) {
 		if chg.Kind == state.ChangeTyping {
 			o.typing = append(o.typing, core.Typing{ChatID: chg.ChatID, Label: chg.Typing.Label()})
@@ -210,7 +218,7 @@ func (o *testOwner) SearchContacts(_ context.Context, q string, _ int) ([]projec
 // Chats, Chat and FolderFilters answer from the test's store, as the real
 // owner answers from its own.
 func (o *testOwner) Topics(_ context.Context, chatID int64) ([]project.TopicRow, error) {
-	return project.TopicRows(storeReader{o.state.Store()}, chatID), o.cmdErr
+	return project.TopicRows(storeReader{Store: o.state.Store()}, chatID), o.cmdErr
 }
 
 func (o *testOwner) Chats(_ context.Context) ([]project.ChatRow, error) {
@@ -542,7 +550,7 @@ func testConfig(historyLimit int) *config.Config {
 func newRoot(st store.Store, historyLimit int, verbose bool) ui.RootModel {
 	m := ui.NewRootModel(verbose).WithConfig(testConfig(historyLimit))
 	if st != nil {
-		m = m.WithOwner(newTestOwner(st))
+		m = m.WithOwner(newTestOwner(st, historyLimit))
 	}
 	return m
 }

@@ -284,6 +284,26 @@ func TestLogin_TheLoggedInUserIsTheAccounts(t *testing.T) {
 	assert.Equal(t, project.LoggedInUser{ID: 42, Username: "ada"}, first.LoggedInUser, "a client attaching later sees it too")
 }
 
+// How much history a page is is the owner's to say, since it is what the owner
+// fetches: a client sizes its window by it rather than by a setting of its own,
+// and hears it again when the host's config changes (#208).
+func TestAccount_SaysHowMuchHistoryAPageIs(t *testing.T) {
+	o := New(&config.Config{UI: config.UIConfig{HistoryLimit: 40}}, zap.NewNop(), state.New(store.NewMemory()), loginConn{}, nopNotifier{})
+	t.Cleanup(o.Stop)
+	a := attach(o)
+	a.Subscribe(project.AccountWindow{})
+
+	first, ok := recvAccount(t, a)
+	require.True(t, ok)
+	assert.Equal(t, 40, first.HistoryPage)
+
+	o.SetConfig(&config.Config{UI: config.UIConfig{HistoryLimit: 70}})
+
+	next, ok := recvAccount(t, a)
+	require.True(t, ok)
+	assert.Equal(t, 70, next.HistoryPage)
+}
+
 // The login follows the account and ends with it: a login nobody finished must
 // not hold the account's end up (#297).
 func TestLogin_EndsWithTheAccount(t *testing.T) {
