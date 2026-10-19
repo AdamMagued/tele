@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -74,16 +75,39 @@ func (s *fileSeen) IsSeen(id string) bool {
 	return ok
 }
 
-// MarkSeen rewrites the file whole. Best effort, as for the database.
+// MarkSeen adds id to what the file says and writes it back whole. Two windows
+// on one host are two processes over one file (#208), so what is on disk is
+// read first and kept, and the file is replaced by a rename rather than
+// rewritten in place: a reader never sees half of it. Two marks landing in the
+// same instant can still lose one, which costs a notice shown once more. Best
+// effort, as for the database.
 func (s *fileSeen) MarkSeen(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if raw, err := os.ReadFile(s.path); err == nil {
+		var onDisk map[string]int64
+		if json.Unmarshal(raw, &onDisk) == nil {
+			for k, at := range onDisk {
+				if _, ok := s.ids[k]; !ok {
+					s.ids[k] = at
+				}
+			}
+		}
+	}
 	s.ids[id] = time.Now().Unix()
 	raw, err := json.Marshal(s.ids)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.path, raw, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".*")
+	if err != nil {
+		return
+	}
+	_, werr := tmp.Write(raw)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil || os.Rename(tmp.Name(), s.path) != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // CarryOver copies into to what from has seen of ids. It is how seen-state an

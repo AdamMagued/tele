@@ -42,6 +42,22 @@ func TestFileSeen_AnUnreadableFileSeesNothing(t *testing.T) {
 	assert.True(t, reopened.IsSeen("some-notice"), "marking rewrites the file whole")
 }
 
+// Two windows on one host are two processes over one file. Each one marking a
+// notice seen keeps what the other marked: a dismissal in one window must not
+// bring a notice back in the next start (#208).
+func TestFileSeen_TwoWindowsKeepWhatTheOtherMarked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notices.json")
+	first, _ := notices.NewFileSeen(path)
+	second, _ := notices.NewFileSeen(path)
+
+	first.MarkSeen("a")
+	second.MarkSeen("b")
+
+	reopened, _ := notices.NewFileSeen(path)
+	assert.True(t, reopened.IsSeen("a"), "the first window's mark was kept")
+	assert.True(t, reopened.IsSeen("b"))
+}
+
 // What an earlier build recorded in the account's database is carried over
 // once, so an upgrade does not show every notice again.
 func TestCarryOver_CopiesWhatWasSeenBefore(t *testing.T) {
