@@ -28,9 +28,10 @@ type Call struct {
 	// an error to give. One that has neither is told, and its reply dropped.
 	Answers bool
 
-	method reflect.Method
-	in     []reflect.Type
-	out    []reflect.Type
+	// fn is the method as a function of the surface it is called on.
+	fn  reflect.Value
+	in  []reflect.Type
+	out []reflect.Type
 }
 
 // Calls is every method of the surface, by name.
@@ -45,34 +46,35 @@ const MethodSubscribe = "Subscribe"
 func calls() map[string]Call {
 	ctxType := reflect.TypeFor[context.Context]()
 	errType := reflect.TypeFor[error]()
-	surface := reflect.TypeFor[core.Surface]()
-	all := make(map[string]Call, surface.NumMethod())
-	for i := range surface.NumMethod() {
-		m := surface.Method(i)
-		c := Call{Name: m.Name, method: m}
-		for j := range m.Type.NumIn() {
-			p := m.Type.In(j)
-			if j == 0 && p == ctxType {
+	all := make(map[string]Call, len(surface))
+	for name, method := range surface {
+		fn := reflect.ValueOf(method)
+		t := fn.Type()
+		c := Call{Name: name, fn: fn}
+		// The first argument is the surface the method is called on.
+		for j := 1; j < t.NumIn(); j++ {
+			p := t.In(j)
+			if j == 1 && p == ctxType {
 				c.Context = true
 				continue
 			}
-			mustCross(m.Name, p)
+			mustCross(name, p)
 			c.in = append(c.in, p)
 		}
-		for j := range m.Type.NumOut() {
-			o := m.Type.Out(j)
+		for j := range t.NumOut() {
+			o := t.Out(j)
 			c.Answers = true
-			if j == m.Type.NumOut()-1 && o == errType {
+			if j == t.NumOut()-1 && o == errType {
 				continue
 			}
-			mustCross(m.Name, o)
+			mustCross(name, o)
 			c.out = append(c.out, o)
 		}
-		if m.Name == MethodSubscribe {
+		if name == MethodSubscribe {
 			c.in = append([]reflect.Type{reflect.TypeFor[project.SubID]()}, c.in...)
 			c.out, c.Answers = nil, false
 		}
-		all[m.Name] = c
+		all[name] = c
 	}
 	return all
 }
@@ -185,13 +187,13 @@ func (c Call) Args(params json.RawMessage) ([]reflect.Value, error) {
 // Invoke calls the method on s with args under ctx, and gives what it
 // answered besides an error, and the error.
 func (c Call) Invoke(ctx context.Context, s core.Surface, args []reflect.Value) ([]reflect.Value, error) {
-	in := args
+	// The surface goes first, seen as the interface rather than as whatever
+	// type is behind it.
+	in := []reflect.Value{reflect.ValueOf(&s).Elem()}
 	if c.Context {
-		in = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
+		in = append(in, reflect.ValueOf(ctx))
 	}
-	// Seen through the surface, so the method's index is the surface's and not
-	// that of whatever type is behind it.
-	outs := reflect.ValueOf(&s).Elem().Method(c.method.Index).Call(in)
+	outs := c.fn.Call(append(in, args...))
 	if len(outs) > len(c.out) {
 		last := outs[len(outs)-1]
 		outs = outs[:len(outs)-1]
