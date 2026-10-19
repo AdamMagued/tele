@@ -10,15 +10,9 @@ import (
 	"slices"
 	"strconv"
 
-	"go.uber.org/zap"
-
-	"github.com/sorokin-vladimir/tele/internal/accountstate"
-	"github.com/sorokin-vladimir/tele/internal/app"
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
-	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/hosting"
-	"github.com/sorokin-vladimir/tele/internal/statedir"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 	"github.com/sorokin-vladimir/tele/internal/ui/theme"
 	"github.com/sorokin-vladimir/tele/internal/version"
@@ -120,8 +114,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "state dir: %v\n", err)
 		os.Exit(1)
 	}
-	log, logPath := openLog(defaultState, true, *verbose)
-	defer log.Sync() //nolint:errcheck
+	// Every start begins by reaching the host of the state directory: a tele
+	// already holding it is attached to, and with nobody there this one
+	// becomes the host, and then reaches itself the same way (#208).
+	reached, err := hosting.Reach(context.Background(), appName, cfg.StateDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, reachFailure(err, cfg.StateDir))
+		os.Exit(1)
+	}
+	isHost := reached.Listener != nil
+	log, logPath := openLog(defaultState, isHost, *verbose)
 
 	// The log keeps every warning on every run, including the ones the TUI shows
 	// only once: suppressing a toast must not lose the record.
@@ -130,72 +132,25 @@ func main() {
 		fmt.Fprintf(os.Stderr, "config: %s\n", w.Text)
 	}
 
-	// Ownership of the state directory is taken before anything opens the
-	// session or the database, and held for the process lifetime.
-	lock, err := statedir.Acquire(cfg.StateDir)
+	r := run{
+		cfgStore:      cfgStore,
+		cfgPath:       *cfgPath,
+		key:           key,
+		log:           log,
+		logPath:       logPath,
+		verbose:       *verbose,
+		trace:         *trace,
+		themeWarnings: themes.Warnings,
+		reached:       reached,
+	}
+	if isHost {
+		err = r.host()
+	} else {
+		err = r.client()
+	}
+	_ = log.Sync()
 	if err != nil {
-		if errors.Is(err, statedir.ErrLocked) {
-			fmt.Fprintf(os.Stderr,
-				"tele is already running (%v).\nOnly one instance can use %s at a time.\n",
-				err, cfg.StateDir)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "state dir: %v\n", err)
-		os.Exit(1)
-	}
-	defer lock.Release() //nolint:errcheck
-
-	// A pinned session_file is left exactly where the user put it, so nothing is
-	// migrated in that case.
-	stateMoved := false
-	if !cfg.SessionPinned {
-		stateMoved, err = statedir.Migrate(cfg.StateDir, filepath.Dir(*cfgPath), log)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "state migration: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	accountCleared, cleanupReason, err := accountstate.Reconcile(cfg.StateDir, cfg.Telegram.SessionFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "account state: %v\n", err)
-		os.Exit(1)
-	}
-	if accountCleared {
-		log.Info("cleared local state before startup", zap.String("reason", string(cleanupReason)))
-	}
-
-	clients := hosting.NewClients()
-	att := core.NewAttachment()
-	leave := clients.Add(att)
-	host, err := app.NewHost(cfgStore, key, log, *trace, clients)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "init: %v\n", err)
-		os.Exit(1)
-	}
-	hostCtx, stopHost := context.WithCancel(context.Background())
-	host.Start(hostCtx)
-
-	client := app.NewClient(app.ClientConfig{
-		Store:      cfgStore,
-		Log:        log,
-		Attachment: att,
-		Detach: func() {
-			att.Detach()
-			leave()
-		},
-		Reload:        host.Reload,
-		StateDir:      cfg.StateDir,
-		Notices:       app.StartupNotices(cfg.StateDir, stateMoved, cfg.SessionPinned),
-		ThemeWarnings: themes.Warnings,
-		LogPath:       logPath,
-		Verbose:       *verbose,
-	})
-	runErr := client.Run()
-	stopHost()
-	host.Stop()
-	if runErr != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", runErr)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -237,8 +192,7 @@ func defaultConfigPath(app string) string {
 
 // stateDirPath returns $XDG_STATE_HOME/<app>, falling back to
 // ~/.local/state/<app>. It does not create the directory: the state directory
-// is created under lock by statedir.Acquire, and the log directory is created
-// by its own caller.
+// is created by reaching its host, and the log directory by its own caller.
 func stateDirPath(app string) (string, error) {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {

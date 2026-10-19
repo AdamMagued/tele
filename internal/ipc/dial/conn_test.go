@@ -63,6 +63,32 @@ func TestAClientReachesItsHostOverTheSocket(t *testing.T) {
 	}
 }
 
+// A client keeps what its host said of itself in hello, such as the config
+// file the host reads, whose settings the client then leaves to it (#208).
+func TestAClientKnowsWhatItsHostSaidOfItself(t *testing.T) {
+	ep, err := ipc.EndpointFor("tele-test", t.TempDir())
+	require.NoError(t, err)
+	l, err := ipc.Listen(ep)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	host := hello
+	host.Config = "/home/ada/.config/tele/host.yml"
+	go func() {
+		conn, err := l.Accept()
+		if err == nil {
+			_ = serve.Conn(context.Background(), conn, core.NewAttachment(), host)
+		}
+	}()
+	conn, err := ipc.Dial(context.Background(), ep)
+	require.NoError(t, err)
+
+	a, err := dial.Dial(context.Background(), conn, hello)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = a.Close() })
+
+	assert.Equal(t, host, a.Host())
+}
+
 // A host that stops says so, and that is the last thing its client hears: the
 // connection ends on it, without the host's context being called off, so the
 // client can tell a host that quit from one that broke (#208).

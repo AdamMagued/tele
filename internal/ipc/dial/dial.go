@@ -21,6 +21,8 @@ import (
 
 // Attachment is an attachment over a connection.
 type Attachment struct {
+	// host is what the host said of itself in hello.
+	host wire.Hello
 	conn io.ReadWriteCloser
 	enc  *wire.Encoder
 	// nextID is the last request id used, nextSub the last subscription id.
@@ -77,6 +79,7 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (*Atta
 		return nil, &Mismatch{Verdict: v, Host: host}
 	}
 	a := &Attachment{
+		host:    host,
 		conn:    conn,
 		enc:     wire.NewEncoder(conn),
 		stream:  make(chan any, core.StreamSize),
@@ -125,6 +128,10 @@ func greet(conn io.ReadWriter, hello wire.Hello) (wire.Hello, *wire.Decoder, err
 // in the order it told them: the same values an attachment in the host's own
 // process carries.
 func (a *Attachment) Stream() <-chan any { return a.stream }
+
+// Host is what the host said of itself when the client attached: its
+// versions, and the config file it reads.
+func (a *Attachment) Host() wire.Hello { return a.host }
 
 // Close ends the attachment: the client is gone.
 func (a *Attachment) Close() error {
