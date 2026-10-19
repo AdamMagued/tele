@@ -124,6 +124,9 @@ type RootModel struct {
 	// tele's, whose settings the overlay then shows and does not change. Empty
 	// when the host is in this process (#208).
 	hostConfig string
+	// unsent is what was being typed when the host was lost, kept for the
+	// client to hand back on the way out (#208).
+	unsent string
 	// configWarnings are the non-fatal config notices, shown as toasts once the
 	// TUI is up. They are also logged and printed to stderr, but stderr is wiped
 	// by the alt-screen a moment later, so on their own those two amount to
@@ -617,6 +620,8 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleConnectFailed(msg.Err)
 	case screens.LoginAnswerMsg:
 		return m.handleLoginAnswer(msg)
+	case HostLostMsg:
+		return m.handleHostLost(msg)
 	case clipboardImagePastedMsg:
 		return m.handleClipboardImagePasted(msg)
 	case components.ComposerLimitMsg:

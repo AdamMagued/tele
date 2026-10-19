@@ -51,6 +51,9 @@ func (s Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s Shell) View() tea.View { return s.root.View() }
 
+// Unsent is what was being typed when the host was lost, empty otherwise.
+func (s Shell) Unsent() string { return s.root.Unsent() }
+
 // nextAccount puts a new model on screen in place of the one whose account
 // ended. Nothing of the old model carries over but the terminal's size, which
 // belongs to neither: what an account had on screen is the account's.

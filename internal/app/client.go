@@ -70,7 +70,9 @@ type Client struct {
 
 	// prog draws whichever account is running; keyMap and noticeSeen are the
 	// person's and the machine's, so every account's model shares them.
-	prog       *tea.Program
+	prog *tea.Program
+	// send hands a message to the model: the program's, once it runs.
+	send       func(tea.Msg)
 	keyMap     keys.KeyMap
 	noticeSeen notices.Seen
 	// tmpDir holds the client's scratch files: what a model saved to show the
@@ -124,9 +126,10 @@ func (c *Client) Run() error {
 	c.prog = tea.NewProgram(ui.NewShell(c.buildRoot(ctx, true), func() ui.RootModel {
 		return c.buildRoot(ctx, false)
 	}))
+	c.send = c.prog.Send
 	go c.bridge(ctx)
 
-	_, err := c.prog.Run()
+	final, err := c.prog.Run()
 	cancel()
 	c.c.Detach()
 
@@ -142,6 +145,11 @@ func (c *Client) Run() error {
 	if err == nil && term.IsTerminal(os.Stdout.Fd()) {
 		home, _ := os.UserHomeDir()
 		_, _ = fmt.Fprint(os.Stdout, c.farewell(home))
+	}
+	// What was being typed when the host went is the person's, and nothing
+	// else kept it: it is handed back where they can copy it (#208).
+	if shell, ok := final.(ui.Shell); ok && shell.Unsent() != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "Not sent:\n%s\n", shell.Unsent())
 	}
 	if ended := c.exitErr(); ended != nil && err == nil {
 		return fmt.Errorf("telegram: %w", ended)
@@ -197,17 +205,31 @@ func (c *Client) nextScreenDir() string {
 // and events from whichever owner the client is seated at, and what the host
 // tells it. The stream is one and ordered, so whatever arrives after the news
 // that an account ended belongs to the next one.
+//
+// When the stream ends, the host is gone, and the model is told whether it
+// quit - it said it was stopping, last - or the link broke (#208).
 func (c *Client) bridge(ctx context.Context) {
+	stopping := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg, ok := <-c.c.Attachment.Stream():
 			if !ok {
+				if c.c.HostConfig == "" && !stopping {
+					// The host is this process's own: its link breaking is a
+					// fault here, not a host that went away.
+					c.c.Log.Error("the link to this process's own host broke")
+				}
+				c.send(ui.HostLostMsg{Quit: stopping})
 				return
 			}
+			if _, ok := msg.(core.HostStopping); ok {
+				stopping = true
+				continue
+			}
 			c.hear(msg)
-			c.prog.Send(msg)
+			c.send(msg)
 		}
 	}
 }
