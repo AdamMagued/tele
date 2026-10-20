@@ -14,8 +14,9 @@ Press `,` for the settings overlay: every setting `tele` has, grouped and ordere
 the way the config file is, so a row you see there is found in the file at the
 same path. It shows what each one is worth now, marks the ones nobody has chosen
 (`[default]`), and says when a change takes hold - at once, `[next]` time `tele`
-does that thing, or after a `[restart]`. Keybindings are listed there too, with
-what your config changed and what it changed from.
+does that thing, after a `[restart]`, or after a `[host restart]` of the `tele`
+that holds the connection. Keybindings are listed there too, with what your
+config changed and what it changed from.
 
 Changes made there are written straight into `config.yml`, keeping your
 comments, blank lines and anything in the file `tele` does not know about. Editing
@@ -30,10 +31,17 @@ they are a deliberate edit to the file rather than a keystroke.
 Some settings belong to the `tele` that holds the Telegram connection: the app
 key, the state directory, the proxy, the cache sizes, how much history is
 fetched at a time, and the desktop notifications. The rest belong to the window
-you are looking at: the theme, the keys, toasts, how images are drawn. In a
-window that joined another `tele` (see [State directory](#state-directory)),
-the first kind is shown read-only and names the config file that `tele` reads
-it from, since a change written here would never reach it.
+you are looking at: the theme, the keys, toasts, how images are drawn. Each
+`tele` reads its own kind from its own config file. A window that joined
+another `tele` (see [State directory](#state-directory)) shows the first kind
+as that `tele` holds it, and a change made there is sent to it: it writes the
+change into its own config file, which may not be the window's, and applies
+it. The window's own settings are written into the window's file as always.
+
+Reloading the config from a window reloads both: the window reads its file
+again, and the `tele` holding the connection reads its own. What either finds
+wrong is said in the same notice, and one that will not take its file says so
+without undoing the other.
 
 ## config.yml
 
@@ -82,7 +90,8 @@ avatars:
 
 `proxy` is how `tele` reaches Telegram's data centres. Every connection takes it:
 messages, photos, voice notes, files, whichever data centre they come from. The
-section is read at startup, so a change takes hold on `[restart]`.
+section is read when the `tele` holding the connection starts, so a change
+takes hold on `[host restart]`.
 
 `proxy.type` says which route, and it takes four values:
 

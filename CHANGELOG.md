@@ -41,11 +41,24 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
   `confirm_quit` says. A window whose `tele` went away says whether it quit or
   the connection broke, and prints what was typed but not sent when you quit
   it (#208, #210).
-- In a window that joined another `tele`, the settings that belong to the
-  connection - the app key, the state directory, the proxy, the cache sizes,
-  how much history is fetched, desktop notifications - are shown read-only and
-  name the config file they are read from. `history_limit` is now always the
-  one the `tele` holding the connection reads (#208).
+- The settings that belong to the connection - the app key, the state
+  directory, the proxy, the cache sizes, how much history is fetched, desktop
+  notifications - can be changed from any window, including one that joined
+  another `tele`. The change is sent to the `tele` holding the connection,
+  which writes it into its own config file and applies it; a window never
+  writes one of these into its own file. `history_limit` is always the one
+  the `tele` holding the connection reads (#208, #315).
+- One of those read only at start is marked `[host restart]`: it takes hold
+  when the `tele` holding the connection starts again, not when the window
+  does (#315).
+- Reloading the config from a window reloads the `tele` holding the
+  connection too, and says in one notice what either found wrong. A warning
+  about a setting is said once, by whichever side the setting belongs to
+  (#315).
+- Two `tele` processes changing settings in one config file at the same
+  moment no longer lose one of the changes (#315).
+- A window and the `tele` it joins must both be this beta or later: an
+  earlier 2.0 beta is named and not joined (#315).
 - A window that joined another `tele` logs to `tele-client.log`, with its
   process id on every line (#208).
 - A `tele` that cannot be joined - 1.11, an earlier 2.0 beta, or one speaking
