@@ -54,7 +54,8 @@ func (r run) hello() wire.Hello {
 func (r run) host() error {
 	cfg := r.cfgStore.Current()
 	clients := hosting.NewClients()
-	srv := hosting.Serve(context.Background(), r.reached.Listener, r.hello(), clients)
+	end := app.NewHostEnd(r.cfgStore, r.hello())
+	srv := hosting.Serve(context.Background(), r.reached.Listener, end, clients)
 	// In this order: the endpoint goes, so nobody new attaches and the others
 	// hear the host is stopping; then the account stops; the lock goes last.
 	var host *app.Host
@@ -88,6 +89,7 @@ func (r run) host() error {
 	if err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
+	end.ApplyTo(host.Apply)
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	host.Start(ctx)

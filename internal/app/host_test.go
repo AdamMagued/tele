@@ -127,7 +127,7 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 	reached, err := hosting.Reach(ctx, "tele-test", t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(reached.Close)
-	srv := hosting.Serve(context.Background(), reached.Listener, testHello, h.host.clients)
+	srv := hosting.Serve(context.Background(), reached.Listener, NewHostEnd(h.host.cfgStore, testHello), h.host.clients)
 	t.Cleanup(func() { srv.Stop(time.Second) })
 	conn, err := ipc.Dial(ctx, reached.Endpoint)
 	require.NoError(t, err)

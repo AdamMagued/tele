@@ -32,6 +32,16 @@ type Attachment interface {
 
 var _ Attachment = (*core.Attachment)(nil)
 
+// Host is the host's own end of a connection: what it says of itself, and the
+// calls about it rather than about an account, answered with no owner seated
+// as well (#315).
+type Host interface {
+	Hello() wire.Hello
+	Settings() wire.HostSettings
+	SetSetting(wire.SetParams) wire.SetResult
+	Reload() wire.ReloadResult
+}
+
 // Conn serves att over conn until the client goes, ctx ends, or one side says
 // something that is not the protocol. It owns conn from here and closes it,
 // and detaches att when it returns: the client is gone.
@@ -43,7 +53,7 @@ var _ Attachment = (*core.Attachment)(nil)
 //
 // A call that takes a context runs beside the others and can be called off; one
 // that does not runs on the reading goroutine, in the order it was asked.
-func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment, host wire.Hello) error {
+func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment, host Host) error {
 	defer att.Detach()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -51,9 +61,9 @@ func Conn(ctx context.Context, conn io.ReadWriteCloser, att Attachment, host wir
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	c := &served{att: att, enc: wire.NewEncoder(conn), calls: map[uint64]context.CancelFunc{}}
+	c := &served{att: att, host: host, enc: wire.NewEncoder(conn), calls: map[uint64]context.CancelFunc{}}
 	dec := wire.NewDecoder(conn)
-	if err := c.greet(dec, host); err != nil {
+	if err := c.greet(dec, host.Hello()); err != nil {
 		return c.end(err, conn)
 	}
 
@@ -120,8 +130,9 @@ func (c *served) end(err error, conn io.Closer) error {
 
 // served is one connection being served.
 type served struct {
-	att Attachment
-	enc *wire.Encoder
+	att  Attachment
+	host Host
+	enc  *wire.Encoder
 
 	mu sync.Mutex
 	// calls holds what calls off each call still running, by request id.
@@ -192,6 +203,17 @@ func (c *served) read(ctx context.Context, dec *wire.Decoder, running *sync.Wait
 
 // request makes the call f asks for.
 func (c *served) request(ctx context.Context, f wire.Frame, running *sync.WaitGroup) error {
+	if answer, ok, err := c.hostCall(f); ok {
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(answer)
+		if err != nil {
+			return c.fail(f.ID, err)
+		}
+		_ = c.enc.Encode(wire.Reply(f.ID, raw))
+		return nil
+	}
 	call, ok := protocol.Calls[f.Method]
 	if !ok {
 		_ = c.enc.Encode(wire.Fail(f.ID, &telerr.Error{
@@ -236,6 +258,26 @@ func (c *served) request(ctx context.Context, f wire.Frame, running *sync.WaitGr
 		_ = c.reply(f.ID, call, outs)
 	})
 	return nil
+}
+
+// hostCall makes f when it is a call about the host, and reports whether it
+// was. These run on the reading goroutine, in the order they were asked: each
+// is a read or a write of one file, and a set followed by a reload must find
+// the set done.
+func (c *served) hostCall(f wire.Frame) (answer any, ok bool, err error) {
+	switch f.Method {
+	case wire.MethodSettings:
+		return c.host.Settings(), true, nil
+	case wire.MethodReload:
+		return c.host.Reload(), true, nil
+	case wire.MethodSet:
+		var p wire.SetParams
+		if err := json.Unmarshal(f.Params, &p); err != nil || p.Key == "" {
+			return nil, true, fmt.Errorf("%w: %s names no setting", wire.ErrProtocol, f.Method)
+		}
+		return c.host.SetSetting(p), true, nil
+	}
+	return nil, false, nil
 }
 
 // reply answers request id with what call answered. A reply that cannot be

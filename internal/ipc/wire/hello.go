@@ -7,7 +7,7 @@ import (
 // ProtocolVersion is the shape of what this binary says on the wire. It goes up
 // with any change the other side could misread. Two binaries with the same one
 // understand each other, whatever their own versions.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // MethodHello is the first thing a client says, and the host's answer is its
 // own. Nothing else is said before it.
@@ -19,11 +19,11 @@ type Hello struct {
 	Protocol int `json:"protocol"`
 	// Binary is the version of the binary, "dev" for one built locally.
 	Binary string `json:"binary"`
-	// Config is the config file the side reads. A client whose file is not
-	// the host's shows the host's settings read-only, naming the file that
-	// holds them, rather than letting a change be written where it never
-	// takes hold.
+	// Config is the config file the side reads.
 	Config string `json:"config"`
+	// Warnings is what was wrong with the host's settings when it started,
+	// said by a host only, so the first window to attach shows it.
+	Warnings []Warning `json:"warnings,omitempty"`
 	// Service is set by a host the service manager keeps running, which a
 	// newer client may ask to restart; a host a terminal keeps running is
 	// somebody's session and is never restarted from outside.

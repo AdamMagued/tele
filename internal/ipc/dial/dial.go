@@ -222,13 +222,23 @@ func (a *Attachment) call(ctx context.Context, method string, args []any, dsts .
 	if err != nil {
 		return err
 	}
+	result, err := a.roundTrip(ctx, method, params)
+	if err != nil {
+		return err
+	}
+	return c.Decode(result, dsts...)
+}
+
+// roundTrip sends method with params and waits for the result that answers
+// it.
+func (a *Attachment) roundTrip(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	id := a.nextID.Add(1)
 	answer := make(chan wire.Frame, 1)
 	a.mu.Lock()
 	select {
 	case <-a.lost:
 		a.mu.Unlock()
-		return a.lostErr
+		return nil, a.lostErr
 	default:
 	}
 	a.waiting[id] = answer
@@ -240,20 +250,53 @@ func (a *Attachment) call(ctx context.Context, method string, args []any, dsts .
 	}()
 
 	if err := a.enc.Encode(wire.Request(id, method, params)); err != nil {
-		return hostLost()
+		return nil, hostLost()
 	}
 	select {
 	case f := <-answer:
 		if f.Error != nil {
-			return f.Error
+			return nil, f.Error
 		}
-		return c.Decode(f.Result, dsts...)
+		return f.Result, nil
 	case <-ctx.Done():
 		_ = a.enc.Encode(wire.Cancel(id))
-		return ctx.Err()
+		return nil, ctx.Err()
 	case <-a.lost:
-		return a.lostErr
+		return nil, a.lostErr
 	}
+}
+
+// askHost makes a call about the host and decodes its answer.
+func askHost[T any](a *Attachment, ctx context.Context, method string, params any) (T, error) {
+	var v T
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return v, err
+	}
+	result, err := a.roundTrip(ctx, method, raw)
+	if err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal(result, &v); err != nil {
+		return v, protocol.Violation(fmt.Errorf("%w: %s: %v", wire.ErrProtocol, method, err))
+	}
+	return v, nil
+}
+
+// HostSettings asks the host for its settings as it holds them (#315).
+func (a *Attachment) HostSettings(ctx context.Context) (wire.HostSettings, error) {
+	return askHost[wire.HostSettings](a, ctx, wire.MethodSettings, struct{}{})
+}
+
+// SetHostSetting asks the host to change one of its settings to value, encoded
+// as JSON; nil resets it.
+func (a *Attachment) SetHostSetting(ctx context.Context, key string, value json.RawMessage) (wire.SetResult, error) {
+	return askHost[wire.SetResult](a, ctx, wire.MethodSet, wire.SetParams{Key: key, Value: value})
+}
+
+// ReloadHost asks the host to read its config file again.
+func (a *Attachment) ReloadHost(ctx context.Context) (wire.ReloadResult, error) {
+	return askHost[wire.ReloadResult](a, ctx, wire.MethodReload, struct{}{})
 }
 
 // tell makes method with args and does not wait: it has nothing to answer.

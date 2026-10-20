@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -291,6 +292,44 @@ func settingValue(cfg *Config, key string) (any, bool) {
 		v = field
 	}
 	return v.Interface(), true
+}
+
+// DecodeValue reads a setting's value out of JSON into the Go type the setting
+// holds, which is how a value that crossed a connection is made the same value
+// as one set in this process: a number is the field's integer, never a
+// float64. Nothing, or null, is a reset (#315).
+func DecodeValue(key string, raw json.RawMessage) (any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	if _, ok := settingFor(key); !ok {
+		return nil, fmt.Errorf("%s is not a setting", key)
+	}
+	t := reflect.TypeFor[Config]()
+	for _, seg := range strings.Split(key, ".") {
+		field, ok := fieldTypeByTag(t, seg)
+		if !ok {
+			return nil, fmt.Errorf("%s is not a setting", key)
+		}
+		t = field
+	}
+	v := reflect.New(t)
+	if err := json.Unmarshal(raw, v.Interface()); err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	return v.Elem().Interface(), nil
+}
+
+func fieldTypeByTag(t reflect.Type, tag string) (reflect.Type, bool) {
+	if t.Kind() != reflect.Struct {
+		return nil, false
+	}
+	for i := range t.NumField() {
+		if t.Field(i).Tag.Get("mapstructure") == tag {
+			return t.Field(i).Type, true
+		}
+	}
+	return nil, false
 }
 
 func fieldByTag(v reflect.Value, tag string) (reflect.Value, bool) {

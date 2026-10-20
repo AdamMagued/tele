@@ -125,8 +125,14 @@ func (h *Host) Reload() (*config.Config, error) {
 		return nil, err
 	}
 	cfg := h.cfgStore.Current()
-	h.current().owner.SetConfig(cfg)
+	h.Apply(cfg)
 	return cfg, nil
+}
+
+// Apply hands cfg, which the host has just read, to the owner running now. An
+// owner opened later starts from the store as it is then.
+func (h *Host) Apply(cfg *config.Config) {
+	h.current().owner.SetConfig(cfg)
 }
 
 // cfg is the config the host is running on. Asked for rather than held, so

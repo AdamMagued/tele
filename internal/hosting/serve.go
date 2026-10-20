@@ -8,14 +8,13 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/ipc/serve"
-	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 )
 
 // Server serves the endpoint: every client that connects gets an attachment of
 // its own among the host's clients, for as long as its connection lasts.
 type Server struct {
 	l       net.Listener
-	hello   wire.Hello
+	host    serve.Host
 	clients *Clients
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -26,11 +25,11 @@ type Server struct {
 	served map[*core.Attachment]struct{}
 }
 
-// Serve accepts clients on l, answering each one's hello with hello, until
-// Stop.
-func Serve(ctx context.Context, l net.Listener, hello wire.Hello, clients *Clients) *Server {
+// Serve accepts clients on l, answering each one's hello and its calls about
+// the host from host, until Stop.
+func Serve(ctx context.Context, l net.Listener, host serve.Host, clients *Clients) *Server {
 	ctx, cancel := context.WithCancel(ctx)
-	s := &Server{l: l, hello: hello, clients: clients, ctx: ctx, cancel: cancel, served: make(map[*core.Attachment]struct{})}
+	s := &Server{l: l, host: host, clients: clients, ctx: ctx, cancel: cancel, served: make(map[*core.Attachment]struct{})}
 	s.conns.Add(1)
 	go s.accept()
 	return s
@@ -51,7 +50,7 @@ func (s *Server) accept() {
 		s.conns.Add(1)
 		go func() {
 			defer s.conns.Done()
-			_ = serve.Conn(s.ctx, conn, att, s.hello)
+			_ = serve.Conn(s.ctx, conn, att, s.host)
 			remove()
 			s.mu.Lock()
 			delete(s.served, att)

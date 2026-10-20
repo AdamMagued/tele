@@ -24,6 +24,14 @@ import (
 
 var hello = wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev"}
 
+// helloHost is a host that says hello and holds no settings.
+type helloHost struct{}
+
+func (helloHost) Hello() wire.Hello                        { return hello }
+func (helloHost) Settings() wire.HostSettings              { return wire.HostSettings{} }
+func (helloHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResult{} }
+func (helloHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
+
 // noConn is a connection to Telegram nothing in these tests reaches.
 type noConn struct{ internaltg.Client }
 
@@ -51,7 +59,7 @@ func host(t *testing.T, clients *hosting.Clients) (ipc.Endpoint, *hosting.Server
 	t.Helper()
 	r := reach(t, stateDir(t))
 	require.NotNil(t, r.Listener)
-	s := hosting.Serve(context.Background(), r.Listener, hello, clients)
+	s := hosting.Serve(context.Background(), r.Listener, helloHost{}, clients)
 	t.Cleanup(func() { s.Stop(time.Second) })
 	return r.Endpoint, s
 }

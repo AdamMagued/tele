@@ -32,7 +32,7 @@ func connect(t *testing.T, s serve.Attachment) *dial.Attachment {
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		_ = serve.Conn(ctx, host, s, hello)
+		_ = serve.Conn(ctx, host, s, &hostEnd{hello: hello})
 	}()
 	a, err := dial.Dial(ctx, client, hello)
 	require.NoError(t, err)

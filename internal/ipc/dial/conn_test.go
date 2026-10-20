@@ -37,7 +37,7 @@ func TestAClientReachesItsHostOverTheSocket(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_ = serve.Conn(ctx, conn, att, hello)
+		_ = serve.Conn(ctx, conn, att, &hostEnd{hello: hello})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -76,7 +76,7 @@ func TestAClientKnowsWhatItsHostSaidOfItself(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err == nil {
-			_ = serve.Conn(context.Background(), conn, core.NewAttachment(), host)
+			_ = serve.Conn(context.Background(), conn, core.NewAttachment(), &hostEnd{hello: host})
 		}
 	}()
 	conn, err := ipc.Dial(context.Background(), ep)
@@ -106,7 +106,7 @@ func TestAHostThatStopsSaysSoLast(t *testing.T) {
 			served <- err
 			return
 		}
-		served <- serve.Conn(context.Background(), conn, att, hello)
+		served <- serve.Conn(context.Background(), conn, att, &hostEnd{hello: hello})
 	}()
 	conn, err := ipc.Dial(context.Background(), ep)
 	require.NoError(t, err)

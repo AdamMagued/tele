@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,6 +225,42 @@ func TestStore_TwoStoresOnOneFileNeverLoseEachOthersChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, last, cfg.UI.HistoryLimit)
 	assert.Equal(t, last, cfg.Photos.MaxLongSidePx)
+}
+
+// A value that crossed a connection as JSON comes back as the Go value the
+// setting holds, so it is written and validated exactly as one set here would
+// be: a number is an int, never a float64 (#315).
+func TestDecodeValue_GivesTheSettingsOwnType(t *testing.T) {
+	cases := []struct {
+		key, raw string
+		want     any
+	}{
+		{"ui.history_limit", "120", 120},
+		{"ui.notifications.desktop", "false", false},
+		{"photos.disk_cache_size", "1048576", int64(1 << 20)},
+		{"proxy.server", `"example.org"`, "example.org"},
+	}
+	for _, c := range cases {
+		got, err := config.DecodeValue(c.key, json.RawMessage(c.raw))
+		require.NoError(t, err, c.key)
+		assert.Equal(t, c.want, got, c.key)
+	}
+}
+
+// Nothing is a reset, which is a value of its own: absence.
+func TestDecodeValue_NothingIsAReset(t *testing.T) {
+	for _, raw := range []json.RawMessage{nil, json.RawMessage("null")} {
+		got, err := config.DecodeValue("ui.history_limit", raw)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	}
+}
+
+func TestDecodeValue_RefusesWhatTheSettingCannotHold(t *testing.T) {
+	_, err := config.DecodeValue("ui.history_limit", json.RawMessage(`"many"`))
+	assert.Error(t, err)
+	_, err = config.DecodeValue("ui.nonexistent", json.RawMessage("1"))
+	assert.Error(t, err)
 }
 
 // childEdit names the file and the key a child process edits; set only in the

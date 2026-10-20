@@ -19,6 +19,14 @@ import (
 
 var hello = wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev", Config: "/tmp/tele/config.yml"}
 
+// helloHost is a host that says hello and holds no settings.
+type helloHost struct{}
+
+func (helloHost) Hello() wire.Hello                        { return hello }
+func (helloHost) Settings() wire.HostSettings              { return wire.HostSettings{} }
+func (helloHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResult{} }
+func (helloHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
+
 // rawClient is a client the test plays by hand, against a host serving a
 // real attachment.
 type rawClient struct {
@@ -33,7 +41,7 @@ func serveRaw(t *testing.T) rawClient {
 	client, host := net.Pipe()
 	t.Cleanup(func() { _ = client.Close() })
 	served := make(chan error, 1)
-	go func() { served <- serve.Conn(context.Background(), host, core.NewAttachment(), hello) }()
+	go func() { served <- serve.Conn(context.Background(), host, core.NewAttachment(), helloHost{}) }()
 	return rawClient{conn: client, dec: wire.NewDecoder(client), enc: wire.NewEncoder(client), served: served}
 }
 
@@ -65,6 +73,17 @@ func (c rawClient) refused(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the host kept the connection")
 	}
+}
+
+// A change to a host setting that names no setting is not something the host
+// can answer, and nothing after it is trusted (#315).
+func TestAHostRefusesASetThatNamesNoSetting(t *testing.T) {
+	c := serveRaw(t)
+	c.greet(t)
+
+	require.NoError(t, c.enc.Encode(wire.Request(2, wire.MethodSet, json.RawMessage(`{"value":1}`))))
+
+	c.refused(t)
 }
 
 func TestAHostRefusesALineThatIsNoFrame(t *testing.T) {
