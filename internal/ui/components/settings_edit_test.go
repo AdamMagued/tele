@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/settings"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 )
@@ -67,22 +68,44 @@ func fileContains(t *testing.T, path, needle string) bool {
 	return strings.Contains(string(raw), needle)
 }
 
-// In a tele that only attaches to another one's host, the host's settings are
-// the host's to read: a change written here would never take hold, so the row
-// cannot be changed and says which file holds it. The client's own settings
-// are edited as ever (#208).
-func TestSettingsEdit_TheHostsSettingsAreTheHostsWhenAttached(t *testing.T) {
-	m, _, path := editable(t, "")
-	m.HeldByHost("/home/ada/.config/tele/host.yml")
+// keptApart is a file store whose host settings are kept in another file, the
+// way a window's are when its host reads its own.
+type keptApart struct {
+	*config.Store
+	hostFile string
+}
 
-	assert.Contains(t, rowFor(t, m, "Notification preview"), "read-only")
-	m = moveTo(t, m, "Notification preview")
+func (k keptApart) OriginOf(key string) string {
+	if e, ok := config.Setting(key); ok && e.Process == settings.Host {
+		return k.hostFile
+	}
+	return k.Origin()
+}
+
+// A row that cannot be changed from here names the file that holds it, which
+// for a host setting is the host's file, not the window's (#315).
+func TestSettingsEdit_AReadOnlyRowNamesTheFileItIsKeptIn(t *testing.T) {
+	path := writeConfig(t, "")
+	store, err := config.NewStore(path, t.TempDir())
+	require.NoError(t, err)
+	km := keys.DefaultKeyMap()
+	m := components.NewSettingsModal(keptApart{store, "/home/ada/.config/tele/host.yml"}, km, km, 100, 40)
+
+	m = moveTo(t, m, "State directory")
 	m, changed := press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
 	assert.False(t, changed)
 	assert.Contains(t, m.StatusForTest(), "host.yml")
-	assert.False(t, fileContains(t, path, "preview"))
+}
 
-	assert.NotContains(t, rowFor(t, m, "Max visible"), "read-only")
+// A host setting read once at start takes hold when the host starts again,
+// which is not when this window does; a window's own one is marked as before.
+func TestSettings_AHostsStartupSettingWaitsForTheHost(t *testing.T) {
+	m, _, _ := editable(t, "")
+
+	assert.Contains(t, rowFor(t, m, "Proxy"), "host restart")
+	assert.NotContains(t, rowFor(t, m, "Image mode"), "host restart")
+	assert.Contains(t, rowFor(t, m, "Image mode"), "restart")
 }
 
 // A toggle has no half-pressed state, so it commits as soon as it is pressed.

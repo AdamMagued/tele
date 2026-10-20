@@ -127,7 +127,9 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 	reached, err := hosting.Reach(ctx, "tele-test", t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(reached.Close)
-	srv := hosting.Serve(context.Background(), reached.Listener, NewHostEnd(h.host.cfgStore, testHello), h.host.clients)
+	end := NewHostEnd(h.host.cfgStore, testHello)
+	end.ApplyTo(h.host.Apply)
+	srv := hosting.Serve(context.Background(), reached.Listener, end, h.host.clients)
 	t.Cleanup(func() { srv.Stop(time.Second) })
 	conn, err := ipc.Dial(ctx, reached.Endpoint)
 	require.NoError(t, err)
@@ -261,7 +263,7 @@ func TestHost_TheNextAccountConnectsWithTheBuiltInKeyAfterAReload(t *testing.T) 
 	builtIn := appkey.Key{ID: 4242, Hash: "built-in"}
 	h := newTestHost(t, &loggedOutConnection{updates: make(chan store.Event)}, builtIn, "ui:\n  history_limit: 30\n")
 	<-h.endpoints // the first account's
-	_, err := h.host.Reload()
+	_, err := hostReload(h.client)()
 	require.NoError(t, err)
 
 	first := h.host.current()

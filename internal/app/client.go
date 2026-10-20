@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,7 +19,9 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/notices"
+	"github.com/sorokin-vladimir/tele/internal/settings"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
@@ -27,10 +30,14 @@ import (
 )
 
 // Attachment is a client's link to its host: the owner's surface, the stream
-// it is told everything on, and the end of the link when the client goes.
+// it is told everything on, what the host said of itself, and the calls about
+// the host's settings.
 type Attachment interface {
 	core.Surface
 	Stream() <-chan any
+	Host() wire.Hello
+	HostCalls
+	ReloadHost(ctx context.Context) (wire.ReloadResult, error)
 }
 
 // ClientConfig is what a client is made from.
@@ -41,13 +48,6 @@ type ClientConfig struct {
 	// Attachment is the client's link to its host, and Detach ends it.
 	Attachment Attachment
 	Detach     func()
-	// Reload re-reads the settings the client and its host read, and returns
-	// the config the client applies to itself.
-	Reload func() (*config.Config, error)
-	// HostConfig is the config file the host reads when the host is another
-	// tele's: its settings are then shown and not changed from here. Empty
-	// when the host is in this process (#208).
-	HostConfig string
 	// OtherWindows counts the other clients of the host this process holds,
 	// which quitting would close too. Nil when the host is another tele's.
 	OtherWindows func() int
@@ -168,9 +168,12 @@ func (c *Client) Run() error {
 func (c *Client) buildRoot(ctx context.Context, first bool) ui.RootModel {
 	cfg := c.c.Store.Current()
 	root := ui.NewRootModel(c.c.Verbose)
+	// Every window reaches its host's settings over its attachment, the
+	// hosting one included: one way, used every day (#315).
 	root = root.WithContext(ctx).WithImageMode(c.imageMode).WithConfig(cfg).WithKeyMap(c.keyMap).WithOwner(c.c.Attachment).
-		WithLogger(c.c.Log).WithConfigReload(c.c.Reload).WithSettingsStore(c.c.Store).WithLogPath(c.c.LogPath).
-		WithHostConfig(c.c.HostConfig).WithOtherWindows(c.c.OtherWindows)
+		WithLogger(c.c.Log).WithConfigReload(c.reloadOwn).WithHostReload(hostReload(c.c.Attachment)).
+		WithSettingsStore(NewWindowSettings(c.c.Store, c.c.Attachment)).WithLogPath(c.c.LogPath).
+		WithOtherWindows(c.c.OtherWindows)
 	root.SetLoginModel(screens.NewLoginModel())
 	root.SetTmpDir(c.nextScreenDir())
 	if first {
@@ -180,8 +183,48 @@ func (c *Client) buildRoot(ctx context.Context, first bool) ui.RootModel {
 		// The themes loaded at startup may have been reloaded since, and a
 		// reload says what is wrong with them itself.
 		root = root.WithThemeWarnings(c.c.ThemeWarnings)
+		// What the host found wrong with its own settings when it started,
+		// said in its hello.
+		root = root.WithHostWarnings(fromWire(c.c.Attachment.Host().Warnings))
 	}
 	return root
+}
+
+// reloadOwn re-reads this window's own config file.
+func (c *Client) reloadOwn() (*config.Config, error) {
+	if err := c.c.Store.Reload(); err != nil {
+		return nil, err
+	}
+	return c.c.Store.Current(), nil
+}
+
+// hostReload is how a window asks its host to re-read the host's settings: the
+// warnings it answers with, or why it would not take its file.
+func hostReload(att interface {
+	ReloadHost(context.Context) (wire.ReloadResult, error)
+}) func() ([]config.Warning, error) {
+	return func() ([]config.Warning, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), hostCallTimeout)
+		defer cancel()
+		answer, err := att.ReloadHost(ctx)
+		if err != nil {
+			return nil, errors.New("the tele hosting this account did not answer")
+		}
+		if answer.Failed != "" {
+			return nil, errors.New(answer.Failed)
+		}
+		return fromWire(answer.Warnings), nil
+	}
+}
+
+// fromWire is what the host said was wrong with its settings, as warnings
+// about the host's.
+func fromWire(ws []wire.Warning) []config.Warning {
+	out := make([]config.Warning, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, config.Warning{Text: w.Text, ID: w.ID, Process: settings.Host})
+	}
+	return out
 }
 
 // nextScreenDir makes the scratch directory of the next model and removes the
@@ -219,7 +262,7 @@ func (c *Client) bridge(ctx context.Context) {
 			return
 		case msg, ok := <-c.c.Attachment.Stream():
 			if !ok {
-				if c.c.HostConfig == "" && !stopping {
+				if c.c.OtherWindows != nil && !stopping {
 					// The host is this process's own: its link breaking is a
 					// fault here, not a host that went away.
 					c.c.Log.Error("the link to this process's own host broke")

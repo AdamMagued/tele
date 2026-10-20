@@ -43,6 +43,7 @@ type WindowSettings struct {
 var (
 	_ settings.Store      = (*WindowSettings)(nil)
 	_ settings.Defaulting = (*WindowSettings)(nil)
+	_ settings.KeptApart  = (*WindowSettings)(nil)
 )
 
 // NewWindowSettings is the settings of a window reading its own from own,
@@ -83,6 +84,18 @@ func (w *WindowSettings) Entries() []settings.Entry { return w.own.Entries() }
 
 // Origin is the window's own file.
 func (w *WindowSettings) Origin() string { return w.own.Origin() }
+
+// OriginOf names the file a setting is kept in: the host's for a host setting,
+// which may not be the window's.
+func (w *WindowSettings) OriginOf(key string) string {
+	if isHosts(key) {
+		if file := w.HostFile(); file != "" {
+			return file + ", read by the tele hosting this account"
+		}
+		return "the config file of the tele hosting this account"
+	}
+	return w.own.Origin()
+}
 
 // Value answers a host setting from what the host holds and a window's from
 // its own file.

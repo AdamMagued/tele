@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/domain"
+	"github.com/sorokin-vladimir/tele/internal/settings"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 	"github.com/sorokin-vladimir/tele/internal/ui/components"
 	"github.com/sorokin-vladimir/tele/internal/ui/media"
@@ -196,6 +198,39 @@ func TestReload_AFailureKeepsTheRunningConfigAndSaysSo(t *testing.T) {
 	zones := m.toasts.Zones()
 	require.NotEmpty(t, zones)
 	assert.Contains(t, toastText(zones[0].Block), "not reloaded")
+}
+
+// A reload is the window's and its host's at once: what the host found wrong
+// with its own settings is said with the window's, and a host that could not
+// take its file says so on its own, since the two can fail apart (#315).
+func TestReload_SaysWhatTheHostFoundToo(t *testing.T) {
+	m, _ := applyModel(t, "")
+	m = m.WithHostReload(func() ([]config.Warning, error) {
+		return []config.Warning{{Text: "proxy.server: ignored", Process: settings.Host}}, nil
+	})
+
+	m, _ = m.reloadFromDisk()
+	m.SettleToastsForTest()
+
+	zones := m.toasts.Zones()
+	require.NotEmpty(t, zones)
+	assert.Contains(t, toastText(zones[0].Block), "proxy.server: ignored")
+}
+
+func TestReload_AHostThatDidNotTakeItsFileSaysSo(t *testing.T) {
+	m, _ := applyModel(t, "")
+	m = m.WithHostReload(func() ([]config.Warning, error) {
+		return nil, errors.New("yaml: line 3: bad indentation")
+	})
+
+	m, _ = m.reloadFromDisk()
+	m.SettleToastsForTest()
+
+	zones := m.toasts.Zones()
+	require.NotEmpty(t, zones)
+	text := toastText(zones[0].Block)
+	assert.Contains(t, text, "host")
+	assert.Contains(t, text, "bad indentation")
 }
 
 // The overlay writes and the reload applies, so a value set through the store

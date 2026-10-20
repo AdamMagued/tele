@@ -3,7 +3,6 @@ package ui
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/settings"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
 )
 
@@ -44,20 +44,50 @@ func TestRoot_CommaOpensTheSettingsOverlay(t *testing.T) {
 	assert.NotEmpty(t, m.Settings().LinesForTest())
 }
 
-// A tele attached to another one's host opens the overlay with the host's
-// settings left to the host, naming the file it reads them from (#208).
-func TestRoot_AttachedTheOverlayLeavesTheHostsSettingsToTheHost(t *testing.T) {
-	m := settingsRoot(t).WithHostConfig("/home/ada/.config/tele/host.yml")
+// askingStore is a file store that also asks a host for its settings, and
+// counts how often it was made to.
+type askingStore struct {
+	*config.Store
+	asked int
+}
+
+func (s *askingStore) Refresh() { s.asked++ }
+
+// The host's settings may have changed since the overlay was last open, from
+// another window or in an editor and reloaded, so each opening asks again
+// (#315).
+func TestRoot_OpeningTheOverlayAsksTheHostAgain(t *testing.T) {
+	m := settingsRoot(t)
+	store := &askingStore{Store: m.settingsStore.(*config.Store)}
+	m = m.WithSettingsStore(store)
 
 	m = press(t, m, ',')
+	next, _ := m.handleMainKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	press(t, next.(RootModel), ',')
 
-	var row string
-	for _, l := range m.Settings().LinesForTest() {
-		if strings.Contains(l, "Notification preview") {
-			row = l
-		}
+	assert.Equal(t, 2, store.asked)
+}
+
+// The window and its host read one file, and each says what is wrong with its
+// own settings: a warning about a host setting comes from the host, once, and
+// not again from the window's own reading of the same file.
+func TestRoot_EachConfigWarningIsSaidOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	require.NoError(t, os.WriteFile(path, []byte(
+		"telegram:\n  api_id: 1\n  api_hash: x\nui:\n  history_limit: 0\n  toasts:\n    error_zone: bottom-middle\n"), 0600))
+	cfg, err := config.Load(path, t.TempDir())
+	require.NoError(t, err)
+	host := []config.Warning{{Text: "ui.history_limit: repaired by the host", Process: settings.Host}}
+
+	m := NewRootModel(false).WithConfig(cfg).WithHostWarnings(host)
+
+	var texts []string
+	for _, w := range m.configWarnings {
+		texts = append(texts, w.Text)
 	}
-	assert.Contains(t, row, "read-only")
+	require.Len(t, texts, 2, texts)
+	assert.Contains(t, texts[0], "ui.toasts.error_zone")
+	assert.Equal(t, "ui.history_limit: repaired by the host", texts[1])
 }
 
 // While it is open it owns the keys, the way the help modal does: it is a

@@ -49,7 +49,7 @@ func startNextAfterReload(t *testing.T, key appkey.Key, setting, before, after s
 	<-h.endpoints
 	was, _ := h.host.cfgStore.Value(setting)
 	require.NoError(t, os.WriteFile(h.path, []byte(after), 0o600))
-	_, err := h.host.Reload()
+	_, err := hostReload(h.client)()
 	require.NoError(t, err)
 	now, _ := h.host.cfgStore.Value(setting)
 	require.NotEqual(t, was, now, "the reload did not change %s", setting)
@@ -89,7 +89,7 @@ func TestHost_AReloadReachesTheOwnerOfTheAccountRunningNow(t *testing.T) {
 		"ui:\n  history_limit: 30\n", "ui:\n  history_limit: 40\n")
 	require.NoError(t, os.WriteFile(r.rig.path, []byte("ui:\n  history_limit: 70\n"), 0o600))
 
-	_, err := r.rig.host.Reload()
+	_, err := hostReload(r.rig.client)()
 	require.NoError(t, err)
 
 	assert.Equal(t, 70, r.next.owner.Config().UI.HistoryLimit)

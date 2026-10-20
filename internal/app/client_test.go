@@ -16,7 +16,7 @@ import (
 
 // streamOnly is an attachment the test feeds by hand.
 type streamOnly struct {
-	core.Surface
+	Attachment
 	stream chan any
 }
 

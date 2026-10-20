@@ -116,19 +116,6 @@ func (h *Host) Stop() {
 	}
 }
 
-// Reload re-reads the config file and hands the result to the owner running
-// now. This is the whole of "apply what is on disk" for the host: one
-// function, whether the change was made in the settings overlay or in an
-// editor (ADR 0009).
-func (h *Host) Reload() (*config.Config, error) {
-	if err := h.cfgStore.Reload(); err != nil {
-		return nil, err
-	}
-	cfg := h.cfgStore.Current()
-	h.Apply(cfg)
-	return cfg, nil
-}
-
 // Apply hands cfg, which the host has just read, to the owner running now. An
 // owner opened later starts from the store as it is then.
 func (h *Host) Apply(cfg *config.Config) {

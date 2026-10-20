@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -156,6 +157,48 @@ func TestWindowSettings_AHostThatCannotBeAskedLeavesItsSettingsUnknown(t *testin
 	_, status := w.Value("ui.history_limit")
 	assert.Equal(t, settings.Unknown, status)
 	assert.Error(t, w.Set("ui.history_limit", 120))
+}
+
+// The whole way across: a window of another tele, reading its own settings
+// from a file of its own, changes a host setting over the socket, and it is
+// the host's owner that runs on it (#315).
+func TestWindowSettings_AHostSettingChangedFromAWindowReachesTheHostsOwner(t *testing.T) {
+	h := testHost(t)
+	own, err := config.NewStore(configFile(t, ""), t.TempDir())
+	require.NoError(t, err)
+	w := NewWindowSettings(own, h.client)
+	w.Refresh()
+
+	require.NoError(t, w.Set("ui.history_limit", 120))
+
+	assert.Eventually(t, func() bool {
+		return h.host.current().owner.Config().UI.HistoryLimit == 120
+	}, 2*time.Second, 10*time.Millisecond)
+	assert.Equal(t, 50, own.Current().UI.HistoryLimit, "the window's own file is not where it went")
+}
+
+// A window's reload asks its host to read its file again, and hears what the
+// host found wrong with its own settings there.
+func TestHostReload_HearsWhatTheHostFound(t *testing.T) {
+	h := testHost(t)
+	path := h.host.cfgStore.Path()
+	require.NoError(t, os.WriteFile(path, []byte("ui:\n  history_limit: 0\n"), 0o600))
+
+	got, err := hostReload(h.client)()
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Text, "ui.history_limit")
+	assert.Equal(t, settings.Host, got[0].Process)
+}
+
+func TestHostReload_SaysWhyTheHostDidNotTakeItsFile(t *testing.T) {
+	h := testHost(t)
+	require.NoError(t, os.WriteFile(h.host.cfgStore.Path(), []byte("ui: [\n"), 0o600))
+
+	_, err := hostReload(h.client)()
+
+	assert.Error(t, err)
 }
 
 // A value the host describes rather than shows is shown as described.

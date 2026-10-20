@@ -21,6 +21,14 @@ func (m RootModel) WithConfigReload(reload func() (*config.Config, error)) RootM
 	return m
 }
 
+// WithHostReload installs how the reload action asks the host to re-read its
+// own settings: each process reads its own from the file, so a reload here is
+// the window's and its host's at once (#315).
+func (m RootModel) WithHostReload(reload func() ([]config.Warning, error)) RootModel {
+	m.reloadHost = reload
+	return m
+}
+
 // WithSettingsStore installs where the settings overlay reads from. Without one
 // the overlay has nothing to show and the action does nothing, which is what
 // tests and any headless caller want.
@@ -101,9 +109,20 @@ func (m RootModel) applyFromDisk() (RootModel, *theme.Loaded, []string, error) {
 	loaded := theme.LoadSlots(cfg.ThemesDir, cfg.UI.ThemeSlots.Dark, cfg.UI.ThemeSlots.Light)
 	theme.SetSlots(loaded.Slots())
 
-	warnings := make([]string, 0, len(cfg.Warnings)+len(loaded.Warnings))
-	for _, w := range cfg.Warnings {
+	var warnings []string
+	for _, w := range windowsWarnings(cfg) {
 		warnings = append(warnings, w.Text)
+	}
+	// The two can fail apart, and each says so: a host that would not take its
+	// file is one more thing wrong, not a reason to undo the window's reload.
+	if m.reloadHost != nil {
+		hostWarnings, err := m.reloadHost()
+		if err != nil {
+			warnings = append(warnings, "host settings not reloaded: "+err.Error())
+		}
+		for _, w := range hostWarnings {
+			warnings = append(warnings, w.Text)
+		}
 	}
 	warnings = append(warnings, loaded.Warnings...)
 	return m, &loaded, warnings, nil

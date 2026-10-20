@@ -99,7 +99,6 @@ func (r run) host() error {
 		return err
 	}
 	return r.runClient(att, app.ClientConfig{
-		Reload: host.Reload,
 		// This window is one of the host's clients; the rest close with it.
 		OtherWindows: func() int { return max(clients.Count()-1, 0) },
 		Notices:      app.StartupNotices(cfg.StateDir, stateMoved, cfg.SessionPinned),
@@ -109,7 +108,7 @@ func (r run) host() error {
 // client runs this process as a client of a host another tele keeps, over the
 // connection reaching it found. Nothing of the account is opened here: no
 // lock, no migration, no owner. The host's settings are its own, from its own
-// file, and this client shows them without changing them (#208).
+// file, and this client changes them only by asking it (#315).
 func (r run) client() error {
 	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
 	defer cancel()
@@ -117,16 +116,8 @@ func (r run) client() error {
 	if err != nil {
 		return errors.New(reachFailure(err, r.cfgStore.Current().StateDir))
 	}
-	reload := func() (*config.Config, error) {
-		if err := r.cfgStore.Reload(); err != nil {
-			return nil, err
-		}
-		return r.cfgStore.Current(), nil
-	}
 	return r.runClient(att, app.ClientConfig{
-		Reload:     reload,
-		HostConfig: att.Host().Config,
-		Notices:    app.StartupNotices(r.cfgStore.Current().StateDir, false, false),
+		Notices: app.StartupNotices(r.cfgStore.Current().StateDir, false, false),
 	})
 }
 

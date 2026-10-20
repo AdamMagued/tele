@@ -309,6 +309,15 @@ type Store interface {
 	Set(key string, v any) error
 }
 
+// KeptApart is a store whose settings are not all kept in one place: a
+// window's own are in its own file, and its host's in the host's (#315).
+// Optional, like Defaulting; a store without it keeps everything in Origin.
+type KeptApart interface {
+	// OriginOf names where the setting at key is kept, in the words Origin
+	// uses.
+	OriginOf(key string) string
+}
+
 // Defaulting is a store that can say a setting is at its default because
 // nothing has chosen otherwise. Optional, and deliberately not part of Store:
 // it is a question about absence, and only a store where absence is possible

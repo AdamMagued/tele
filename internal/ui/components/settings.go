@@ -39,24 +39,14 @@ type SettingsModal struct {
 	// refusal, most usefully. It is shown where the hint is, and cleared by the
 	// next key.
 	status string
-	// hostFile is the config file the host reads, when the host is another
-	// tele's: its settings are then shown and not changed from here. Empty
-	// when this tele is the host (#208).
-	hostFile string
-}
-
-// HeldByHost says that the host is another tele, reading its settings from
-// file: they are shown read-only, naming it.
-func (s *SettingsModal) HeldByHost(file string) {
-	s.hostFile = file
-	s.build()
 }
 
 // keptIn is where the setting under it is kept, for a row that cannot be
-// changed from here.
+// changed from here. A host setting is kept in the host's file, which may not
+// be this window's (#315).
 func (s *SettingsModal) keptIn(it settingsItem) string {
-	if s.hostFile != "" && it.entry != nil && it.entry.Process == settings.Host {
-		return "kept by the tele hosting this account, in " + s.hostFile
+	if apart, ok := s.store.(settings.KeptApart); ok && it.entry != nil {
+		return "kept in " + apart.OriginOf(it.entry.Key)
 	}
 	return "kept in " + s.store.Origin()
 }
@@ -169,11 +159,6 @@ func (s *SettingsModal) build() {
 			group, first = e.Group, false
 		}
 		value, status := s.store.Value(e.Key)
-		if s.hostFile != "" && e.Process == settings.Host {
-			// The host reads its own settings, from its own file: one written
-			// here would never take hold (#208).
-			e.ReadOnly = true
-		}
 		items = append(items, settingRows(e, value, status, defaulting)...)
 	}
 
@@ -291,6 +276,12 @@ func settingMarker(e settings.Entry) string {
 	case settings.NextUse:
 		return "next"
 	case settings.Startup:
+		// The host reads its own once, when it starts, and that is not when
+		// this window does: a window attached to another tele's host can be
+		// restarted any number of times without the change taking hold.
+		if e.Process == settings.Host {
+			return "host restart"
+		}
 		return "restart"
 	}
 	return ""
@@ -303,6 +294,7 @@ func markerLegend() []string {
 		"default|nobody chose this; it is what tele picked",
 		"next|takes effect the next time tele does that thing",
 		"restart|takes effect the next time tele starts",
+		"host restart|takes effect the next time the tele hosting this account starts",
 		"read-only|changed by editing the file, not from here",
 	}
 }

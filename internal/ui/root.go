@@ -112,18 +112,17 @@ type RootModel struct {
 	accountSub project.SubID
 	account    project.AccountContents
 	cfg        *config.Config
-	// reloadConfig re-reads the config file and hands the result to everything
-	// else holding one. Supplied by the app; nil in tests and wherever nothing
-	// can be reloaded, in which case the reload action reloads themes alone.
+	// reloadConfig re-reads this window's config file. Supplied by the app;
+	// nil in tests and wherever nothing can be reloaded, in which case the
+	// reload action reloads themes alone.
 	reloadConfig func() (*config.Config, error)
+	// reloadHost asks the host to re-read its settings, and answers with what
+	// it found wrong with them. Nil when there is no host to ask (#315).
+	reloadHost func() ([]config.Warning, error)
 	// settingsStore is where the settings overlay reads from. An interface
 	// rather than the config store itself, because the overlay is shaped for a
 	// second one - the Telegram account - to arrive beside it (ADR 0010).
 	settingsStore settings.Store
-	// hostConfig is the config file the host reads when the host is another
-	// tele's, whose settings the overlay then shows and does not change. Empty
-	// when the host is in this process (#208).
-	hostConfig string
 	// unsent is what was being typed when the host was lost, kept for the
 	// client to hand back on the way out (#208).
 	unsent string
@@ -299,10 +298,10 @@ func (m RootModel) WithContext(ctx context.Context) RootModel {
 	return m
 }
 
-// WithHostConfig says the host is another tele's, reading its settings from
-// file: the overlay shows them and does not change them.
-func (m RootModel) WithHostConfig(file string) RootModel {
-	m.hostConfig = file
+// WithHostWarnings adds what the host found wrong with its own settings when
+// it started, to be shown with this window's (#315).
+func (m RootModel) WithHostWarnings(warnings []config.Warning) RootModel {
+	m.configWarnings = append(m.configWarnings, warnings...)
 	return m
 }
 
@@ -355,7 +354,7 @@ func (m RootModel) WithConfig(cfg *config.Config) RootModel {
 	}
 	m.toasts = components.NewToastStack(w, h, cfg.UI.Toasts.MaxVisible,
 		parseToastZone(cfg.UI.Toasts.ErrorZone), parseToastZone(cfg.UI.Toasts.NotifyZone))
-	m.configWarnings = cfg.Warnings
+	m.configWarnings = windowsWarnings(cfg)
 	return m.applyConfig(cfg)
 }
 
@@ -381,6 +380,19 @@ func (m RootModel) applyConfig(cfg *config.Config) RootModel {
 	m.chat.SetMaxMediaPx(cfg.Photos.MaxLongSidePx)
 
 	return m
+}
+
+// windowsWarnings is what is wrong with this window's own settings in cfg. The
+// host reads the same file and says what is wrong with its own, so a warning
+// about a host setting is left to it and said once (#315).
+func windowsWarnings(cfg *config.Config) []config.Warning {
+	var out []config.Warning
+	for _, w := range cfg.Warnings {
+		if w.Process != settings.Host {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // configWarningDuration is how long a config warning stays on screen. It is

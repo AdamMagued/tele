@@ -20,10 +20,12 @@ func (m RootModel) openSettings() (RootModel, tea.Cmd) {
 	if m.settingsStore == nil {
 		return m, nil
 	}
-	m.settings = components.NewSettingsModal(m.settingsStore, m.keyMap, keys.DefaultKeyMap(), m.width, m.height)
-	if m.hostConfig != "" {
-		m.settings.HeldByHost(m.hostConfig)
+	// The host's settings are asked for again at every opening: another window
+	// or an editor may have changed them meanwhile (#315).
+	if asks, ok := m.settingsStore.(interface{ Refresh() }); ok {
+		asks.Refresh()
 	}
+	m.settings = components.NewSettingsModal(m.settingsStore, m.keyMap, keys.DefaultKeyMap(), m.width, m.height)
 	return m, nil
 }
 
