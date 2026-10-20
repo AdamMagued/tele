@@ -158,7 +158,13 @@ func (s *Store) Set(key string, v any) error {
 
 	s.writes.Lock()
 	defer s.writes.Unlock()
-	if err := editFile(s.path, key, v); err != nil {
+	unlock, err := lockEdits(s.path)
+	if err != nil {
+		return err
+	}
+	err = editFile(s.path, key, v)
+	unlock()
+	if err != nil {
 		return err
 	}
 	return s.load()

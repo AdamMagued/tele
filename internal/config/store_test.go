@@ -2,7 +2,9 @@ package config_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -184,4 +186,101 @@ func TestStore_ConcurrentSetsBothLand(t *testing.T) {
 	assert.Equal(t, 120, s.Current().UI.HistoryLimit)
 	assert.False(t, s.Current().UI.Notifications.Preview)
 	assert.Equal(t, 1200, s.Current().Photos.MaxLongSidePx)
+}
+
+// The host and a window of another process often edit one file, each its own
+// settings. Neither may write a file read before the other's change landed, or
+// that change is gone (#315). Two stores on one file stand in for the two
+// processes: the lock is on an open file, so they contend for it as processes
+// would.
+func TestStore_TwoStoresOnOneFileNeverLoseEachOthersChange(t *testing.T) {
+	host, path := storeAt(t, "")
+	window, err := config.NewStore(path, t.TempDir())
+	require.NoError(t, err)
+
+	// Both keys take every value in (first, last].
+	const first, last = 100, 200
+	var wg sync.WaitGroup
+	write := func(s *config.Store, key string, read func(*config.Config) int) {
+		defer wg.Done()
+		for i := first + 1; i <= last; i++ {
+			if !assert.NoError(t, s.Set(key, i)) {
+				return
+			}
+			// Once Set has returned the value is in the file, and only this
+			// writer changes this key, so the file may never say less.
+			cfg, err := config.Load(path, t.TempDir())
+			if !assert.NoError(t, err) || !assert.GreaterOrEqual(t, read(cfg), i, "%s went back", key) {
+				return
+			}
+		}
+	}
+	wg.Add(2)
+	go write(host, "ui.history_limit", func(c *config.Config) int { return c.UI.HistoryLimit })
+	go write(window, "photos.max_long_side_px", func(c *config.Config) int { return c.Photos.MaxLongSidePx })
+	wg.Wait()
+
+	cfg, err := config.Load(path, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, last, cfg.UI.HistoryLimit)
+	assert.Equal(t, last, cfg.Photos.MaxLongSidePx)
+}
+
+// childEdit names the file and the key a child process edits; set only in the
+// processes TestStore_TwoProcessesOnOneFileNeverLoseEachOthersChange starts.
+const childEdit = "TELE_CONFIG_CHILD_EDIT"
+
+// The same edits from real processes, which is the case in the wild: the lock
+// is the operating system's here, not one process's file table.
+func TestStore_TwoProcessesOnOneFileNeverLoseEachOthersChange(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts processes")
+	}
+	_, path := storeAt(t, "")
+	keys := []string{"ui.history_limit", "photos.max_long_side_px"}
+	children := make([]*exec.Cmd, len(keys))
+	outs := make([]*strings.Builder, len(keys))
+	for i, key := range keys {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestStoreChild$")
+		cmd.Env = append(os.Environ(), childEdit+"="+path+"|"+key)
+		outs[i] = &strings.Builder{}
+		cmd.Stdout, cmd.Stderr = outs[i], outs[i]
+		children[i] = cmd
+	}
+	for _, c := range children {
+		require.NoError(t, c.Start())
+	}
+	for i, c := range children {
+		assert.NoError(t, c.Wait(), "%s: %s", keys[i], outs[i])
+	}
+
+	cfg, err := config.Load(path, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, childLast, cfg.UI.HistoryLimit)
+	assert.Equal(t, childLast, cfg.Photos.MaxLongSidePx)
+}
+
+// childLast is the last value a child writes; it writes every one from 101 on.
+const childLast = 200
+
+// TestStoreChild is one process of the edits above: it writes its key over and
+// over, and fails the moment the file says less than it last wrote.
+func TestStoreChild(t *testing.T) {
+	edit := os.Getenv(childEdit)
+	if edit == "" {
+		t.Skip("run only as a child of the edits across processes")
+	}
+	path, key, _ := strings.Cut(edit, "|")
+	s, err := config.NewStore(path, t.TempDir())
+	require.NoError(t, err)
+	for i := 101; i <= childLast; i++ {
+		require.NoError(t, s.Set(key, i))
+		cfg, err := config.Load(path, t.TempDir())
+		require.NoError(t, err)
+		got := cfg.UI.HistoryLimit
+		if key != "ui.history_limit" {
+			got = cfg.Photos.MaxLongSidePx
+		}
+		require.GreaterOrEqual(t, got, i, "%s went back", key)
+	}
 }
