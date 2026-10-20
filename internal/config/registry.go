@@ -349,11 +349,11 @@ func repairIllegal(v *viper.Viper) []Warning {
 		if !ok {
 			// No default to fall back to. Say so and leave the value alone;
 			// whatever reads it is where the fallback lives.
-			warns = append(warns, Warning{Text: fmt.Sprintf("%s: %v; ignored", e.Key, err)})
+			warns = append(warns, Warning{Text: fmt.Sprintf("%s: %v; ignored", e.Key, err), Process: e.Process})
 			continue
 		}
 		v.Set(e.Key, def)
-		warns = append(warns, Warning{Text: fmt.Sprintf("%s: %v; using %v instead", e.Key, err, def)})
+		warns = append(warns, Warning{Text: fmt.Sprintf("%s: %v; using %v instead", e.Key, err, def), Process: e.Process})
 	}
 	return warns
 }

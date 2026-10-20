@@ -159,19 +159,25 @@ type Config struct {
 // One carrying an ID does not: it describes a key that is merely dead, where
 // acting on it changes nothing and only tidies the file. Repeating that at every
 // launch is nagging, so the ID keys a seen-state and it is shown once.
+//
+// Process is whose setting it is about. The host and a client read the same
+// file, and each reports only the warnings about its own settings, so a tele
+// that is both says each one once (#315).
 type Warning struct {
-	Text string
-	ID   string
+	Text    string
+	ID      string
+	Process settings.Process
 }
 
-// warn records a warning shown at every launch.
-func (c *Config) warn(format string, args ...any) {
-	c.Warnings = append(c.Warnings, Warning{Text: fmt.Sprintf(format, args...)})
+// warn records a warning about one of p's settings, shown at every launch.
+func (c *Config) warn(p settings.Process, format string, args ...any) {
+	c.Warnings = append(c.Warnings, Warning{Text: fmt.Sprintf(format, args...), Process: p})
 }
 
-// warnOnce records a warning shown only until the user has seen it.
-func (c *Config) warnOnce(id, format string, args ...any) {
-	c.Warnings = append(c.Warnings, Warning{Text: fmt.Sprintf(format, args...), ID: id})
+// warnOnce records a warning about one of p's settings, shown only until the
+// user has seen it.
+func (c *Config) warnOnce(p settings.Process, id, format string, args ...any) {
+	c.Warnings = append(c.Warnings, Warning{Text: fmt.Sprintf(format, args...), ID: id, Process: p})
 }
 
 // Load reads the config at path. defaultStateDir is the platform state
@@ -217,10 +223,10 @@ func (c *Config) resolveProxy(path string) error {
 	}
 	for _, n := range proxy.Notices(c.Proxy) {
 		if n.ID == "" {
-			c.warn("%s", n.Text)
+			c.warn(settings.Host, "%s", n.Text)
 			continue
 		}
-		c.warnOnce(n.ID, "%s", n.Text)
+		c.warnOnce(settings.Host, n.ID, "%s", n.Text)
 	}
 	return nil
 }
@@ -253,7 +259,7 @@ func (c *Config) resolveTheme() {
 		for key, raw := range v {
 			name, ok := raw.(string)
 			if !ok {
-				c.warn("ui.theme.%s must be a theme name; ignored", key)
+				c.warn(settings.Client, "ui.theme.%s must be a theme name; ignored", key)
 				continue
 			}
 			switch strings.ToLower(strings.TrimSpace(key)) {
@@ -262,11 +268,11 @@ func (c *Config) resolveTheme() {
 			case "light":
 				c.UI.ThemeSlots.Light = c.themeName(name)
 			default:
-				c.warn("ui.theme has no slot %q; the slots are dark and light", key)
+				c.warn(settings.Client, "ui.theme has no slot %q; the slots are dark and light", key)
 			}
 		}
 	default:
-		c.warn("ui.theme must be a theme name or a map of dark/light; ignored")
+		c.warn(settings.Client, "ui.theme must be a theme name or a map of dark/light; ignored")
 	}
 }
 
@@ -281,7 +287,7 @@ func (c *Config) themeName(s string) string {
 		// Shown once: the config already behaves the way it always did, and the
 		// only thing left to do is delete a line. Nagging about that every
 		// launch would be worse than the dead line itself.
-		c.warnOnce("config.ui.theme.default",
+		c.warnOnce(settings.Client, "config.ui.theme.default",
 			`ui.theme: "default" is no longer a theme name and is ignored — the built-in themes are tele-dark and tele-light. Nothing has changed for you; you can delete the line. See docs/themes.md`)
 		return ""
 	}
@@ -307,7 +313,7 @@ func (c *Config) resolveNotifications(v *viper.Viper) {
 		return
 	}
 	if v.InConfig("ui.notifications.preview") {
-		c.warnOnce("config.ui.notification_preview.ignored",
+		c.warnOnce(settings.Host, "config.ui.notification_preview.ignored",
 			"ui.notification_preview is ignored because ui.notifications.preview is set — you can delete the old line")
 		return
 	}
@@ -317,11 +323,11 @@ func (c *Config) resolveNotifications(v *viper.Viper) {
 	// because unlike a moved line it is still wrong.
 	old := settings.Entry{Key: deprecatedNotificationPreview, Widget: settings.Toggle}
 	if err := old.Validate(v.Get(deprecatedNotificationPreview)); err != nil {
-		c.warn("%s: %v; using %v instead", deprecatedNotificationPreview, err, c.UI.Notifications.Preview)
+		c.warn(settings.Host, "%s: %v; using %v instead", deprecatedNotificationPreview, err, c.UI.Notifications.Preview)
 		return
 	}
 	c.UI.Notifications.Preview = v.GetBool(deprecatedNotificationPreview)
-	c.warnOnce("config.ui.notification_preview.moved",
+	c.warnOnce(settings.Host, "config.ui.notification_preview.moved",
 		"ui.notification_preview has moved to ui.notifications.preview and is read from where it is — nothing has changed for you; move the line when convenient")
 }
 
@@ -338,13 +344,13 @@ func (c *Config) resolveState(defaultStateDir string) {
 	case c.StateDir != "":
 		c.StateDir = ExpandTilde(c.StateDir)
 		if c.Telegram.SessionFile != "" {
-			c.warn("telegram.session_file is ignored because state_dir is set; remove it from the config")
+			c.warn(settings.Host, "telegram.session_file is ignored because state_dir is set; remove it from the config")
 		}
 	case c.Telegram.SessionFile != "":
 		c.Telegram.SessionFile = ExpandTilde(c.Telegram.SessionFile)
 		c.StateDir = filepath.Dir(c.Telegram.SessionFile)
 		c.SessionPinned = true
-		c.warn("telegram.session_file is deprecated and will be removed in the next release; set state_dir instead")
+		c.warn(settings.Host, "telegram.session_file is deprecated and will be removed in the next release; set state_dir instead")
 		return
 	default:
 		c.StateDir = defaultStateDir

@@ -120,3 +120,32 @@ func TestSettings_AreReturnedAsACopy(t *testing.T) {
 
 	assert.NotEqual(t, "vandalised", config.Settings()[0].Key)
 }
+
+// Every warning says whose setting it is about, because each process reports
+// only its own: the host and a client read the same file, and a warning both
+// reported would be shown twice in the window of a tele that is both (#315).
+func TestLoad_AWarningIsThatOfTheProcessWhoseSettingItIsAbout(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       settings.Process
+	}{
+		{"a repaired client setting", "ui:\n  toasts:\n    error_zone: bottom-middle\n", settings.Client},
+		{"a repaired host setting", "ui:\n  history_limit: 0\n", settings.Host},
+		{"a theme that names no slot", "ui:\n  theme:\n    middle: nord\n", settings.Client},
+		{"a proxy key its type does not use", "proxy:\n  type: direct\n  server: example.org\n", settings.Host},
+		{"the moved notification preview", "ui:\n  notification_preview: false\n", settings.Host},
+		{"the deprecated session file", "", settings.Host},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := c.body
+			if body == "" {
+				body = "  session_file: " + filepath.Join(t.TempDir(), "session.json") + "\n"
+			}
+			cfg := loadWith(t, body)
+
+			require.Len(t, cfg.Warnings, 1, warningTexts(cfg))
+			assert.Equal(t, c.want, cfg.Warnings[0].Process, cfg.Warnings[0].Text)
+		})
+	}
+}
