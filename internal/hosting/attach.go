@@ -22,7 +22,7 @@ var ErrServiceStillOlder = errors.New("the service started again on the version 
 var ErrNoHostCameBack = errors.New("no tele came back to host the state directory")
 
 // waitForService is how long a client waits for a service to come back.
-var waitForService = 30 * time.Second
+var waitForService = dial.ServiceReturn
 
 // Attach attaches to the host r reached, saying hello. A service older than
 // this client is asked to restart, and attached to once its service manager

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"runtime"
 	"slices"
 	"time"
 
@@ -29,8 +30,20 @@ var ErrGaveUp = errors.New("the service did not come back")
 // less often, up to every reattachPauseCap, and gives up after giveUpAfter.
 var (
 	reattachPauseCap = 5 * time.Second
-	giveUpAfter      = 30 * time.Second
+	giveUpAfter      = ServiceReturn
 )
+
+// ServiceReturn is how long a service may take to come back before a client
+// gives up on it. A service manager restarts a service within seconds; Task
+// Scheduler waits a minute first, so on Windows it is longer (#182).
+var ServiceReturn = serviceReturn(runtime.GOOS)
+
+func serviceReturn(goos string) time.Duration {
+	if goos == "windows" {
+		return 90 * time.Second
+	}
+	return 30 * time.Second
+}
 
 // firstPause is the wait before the second attempt.
 const firstPause = 100 * time.Millisecond
