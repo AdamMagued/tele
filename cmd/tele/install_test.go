@@ -25,7 +25,12 @@ type managed struct {
 	uninstalled []string
 	// none says nothing is installed to uninstall.
 	none bool
+	// runs is the command the installed service runs, empty when none is
+	// installed.
+	runs string
 }
+
+func (m *managed) Installed(string) (string, bool, error) { return m.runs, m.runs != "", nil }
 
 func (m *managed) Install(u service.Unit) error {
 	m.installed = append(m.installed, u)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,71 @@ func TestLaunchd_Uninstall(t *testing.T) {
 	removed, err = m.Uninstall("tele")
 	require.NoError(t, err)
 	assert.False(t, removed)
+}
+
+// What an installed agent runs is read back from it, for status to check the
+// command is still there and still this tele (#182).
+func TestLaunchd_InstalledSaysWhatTheAgentRuns(t *testing.T) {
+	m := service.Launchd{Home: t.TempDir(), UID: 501, Run: (&commands{}).run}
+	_, ok, err := m.Installed("tele")
+	require.NoError(t, err)
+	assert.False(t, ok, "nothing installed")
+
+	require.NoError(t, m.Install(service.Unit{Name: "tele", Binary: "/opt/home brew/bin/tele", Config: "/c.yml"}))
+
+	binary, ok, err := m.Installed("tele")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "/opt/home brew/bin/tele", binary)
+}
+
+func TestSystemd_InstalledSaysWhatTheUnitRuns(t *testing.T) {
+	m := service.Systemd{ConfigHome: t.TempDir(), Run: (&commands{}).run}
+	_, ok, err := m.Installed("tele")
+	require.NoError(t, err)
+	assert.False(t, ok, "nothing installed")
+
+	require.NoError(t, m.Install(service.Unit{Name: "tele", Binary: `/home/ada/my "bin"/tele%1`, Config: "/c.yml"}))
+
+	binary, ok, err := m.Installed("tele")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, `/home/ada/my "bin"/tele%1`, binary)
+}
+
+// schtasks prints a task's XML; what it runs is read from that, whichever
+// encoding it was printed in.
+func TestTaskScheduler_InstalledSaysWhatTheTaskRuns(t *testing.T) {
+	win := service.Unit{Name: "tele", Binary: `C:\Users\ada\bin\tele.exe`, Config: `C:\c.yml`}
+	utf16 := service.TaskXML(win)
+	utf8 := strings.Replace(string(decodeUTF16(utf16)), `encoding="UTF-16"`, `encoding="UTF-8"`, 1)
+	for name, printed := range map[string][]byte{"UTF-16": utf16, "UTF-8": []byte(utf8)} {
+		t.Run(name, func(t *testing.T) {
+			m := service.TaskScheduler{Output: func(string, ...string) ([]byte, error) { return printed, nil }}
+
+			binary, ok, err := m.Installed("tele")
+
+			require.NoError(t, err)
+			assert.True(t, ok)
+			assert.Equal(t, `C:\Users\ada\bin\tele.exe`, binary)
+		})
+	}
+
+	none := service.TaskScheduler{Output: func(string, ...string) ([]byte, error) {
+		return nil, errors.New("ERROR: The system cannot find the file specified.")
+	}}
+	_, ok, err := none.Installed("tele")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// decodeUTF16 reads little-endian UTF-16 with a byte order mark.
+func decodeUTF16(b []byte) string {
+	units := make([]uint16, 0, len(b)/2)
+	for i := 2; i+1 < len(b); i += 2 {
+		units = append(units, uint16(b[i])|uint16(b[i+1])<<8)
+	}
+	return string(utf16.Decode(units))
 }
 
 // A systemd user unit is written where the user's manager reads it, enabled

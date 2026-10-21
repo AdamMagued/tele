@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -19,29 +21,50 @@ import (
 )
 
 // installer installs and uninstalls the service of a config with the system's
-// service manager (#182).
+// service manager, and checks the one installed (#182).
 type installer struct {
 	manager func() (service.Manager, error)
 	// executable is the running binary, which is what installs the service.
 	executable func() (string, error)
-	out        io.Writer
+	// versionOf is what the command at a path says its version is.
+	versionOf func(path string) (string, error)
+	out       io.Writer
+}
+
+// newInstaller is the installer of this system, saying what it does on cmd's
+// output.
+func newInstaller(cmd *cobra.Command) installer {
+	return installer{
+		manager: func() (service.Manager, error) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, err
+			}
+			return service.ForThisSystem(home)
+		},
+		executable: os.Executable,
+		versionOf:  versionOf,
+		out:        cmd.OutOrStdout(),
+	}
+}
+
+// versionOf runs the tele at path for its version.
+func versionOf(path string) (string, error) {
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // newInstallCmds are `tele daemon install` and `tele daemon uninstall`.
 func newInstallCmds(o *options) []*cobra.Command {
-	in := func(cmd *cobra.Command) installer {
-		return installer{
-			manager: func() (service.Manager, error) {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return nil, err
-				}
-				return service.ForThisSystem(home)
-			},
-			executable: os.Executable,
-			out:        cmd.OutOrStdout(),
-		}
-	}
+	in := newInstaller
 	var path string
 	install := &cobra.Command{
 		Use:   "install",

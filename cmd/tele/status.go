@@ -25,7 +25,7 @@ func newStatusCmd(o *options) *cobra.Command {
 		Short: "Say how the tele hosting the account is doing",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStatus(cmd.Context(), *o, cmd.OutOrStdout())
+			return newInstaller(cmd).status(cmd.Context(), *o)
 		},
 	}
 }
@@ -34,13 +34,63 @@ func newStatusCmd(o *options) *cobra.Command {
 // it from any other failure.
 const noHostCode = 3
 
-// runStatus asks the host of the state directory how it is doing, and prints
-// what it said to w.
-func runStatus(ctx context.Context, o options, w io.Writer) error {
+// status asks the host of the state directory how it is doing, and says what
+// it said, and what is wrong with the service installed for the config, if
+// one is: whether or not a host answers, since a service whose command is gone
+// is exactly one that does not (#182).
+func (in installer) status(ctx context.Context, o options) error {
 	s, err := newSetup(o.cfgPath)
 	if err != nil {
 		return err
 	}
+	asked := askHost(ctx, s, in.out)
+	if warning := in.installedWarning(s); warning != "" {
+		_, _ = fmt.Fprintln(in.out, warning)
+	}
+	return asked
+}
+
+// installedWarning is what is wrong with the service installed for the config
+// read by s, empty when nothing is, or nothing is installed.
+func (in installer) installedWarning(s setup) string {
+	m, err := in.manager()
+	if err != nil {
+		return ""
+	}
+	u, err := unitOf(s, "")
+	if err != nil {
+		return ""
+	}
+	binary, ok, err := m.Installed(u.Name)
+	if err != nil {
+		return fmt.Sprintf("The service %s cannot be read: %v", u.Name, err)
+	}
+	if !ok {
+		return ""
+	}
+	return unitWarning(binary, in.versionOf, version.Version)
+}
+
+// unitWarning is what is wrong with a service that runs binary, for a tele of
+// version mine to say: a command that is gone, which the service manager can
+// no longer start, or another tele than this one, which a restart would start.
+func unitWarning(binary string, versionOf func(string) (string, error), mine string) string {
+	v, err := versionOf(binary)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Sprintf("The service runs %s, which is not there any more.\n`tele daemon install` registers it again.", binary)
+	case err != nil:
+		return fmt.Sprintf("The service runs %s, which did not say its version: %v", binary, err)
+	case v != mine:
+		return fmt.Sprintf("The service runs %s, which is tele %s, not this tele (%s).\n`tele daemon install` from this one registers it again.", binary, v, mine)
+	default:
+		return ""
+	}
+}
+
+// askHost asks the host of the state directory read by s how it is doing, and
+// prints what it said to w.
+func askHost(ctx context.Context, s setup, w io.Writer) error {
 	stateDir := s.store.Current().StateDir
 	none := &exitCode{code: noHostCode, msg: fmt.Sprintf("No tele hosts %s.", stateDir)}
 	// The endpoint is named after the state directory's resolved path: with no

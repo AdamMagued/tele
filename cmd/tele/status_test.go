@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -98,6 +99,59 @@ func TestStatusText_ComparesVersions(t *testing.T) {
 
 	older := statusText("/s", service, status, nil, wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.1"}, statusNow)
 	assertSays(t, older, "This tele is 2.0.0-beta.1", "older")
+}
+
+// reportedVersions answers what each command says its version is; a command it
+// does not know is not there.
+func reportedVersions(known map[string]string) func(string) (string, error) {
+	return func(path string) (string, error) {
+		v, ok := known[path]
+		if !ok {
+			return "", os.ErrNotExist
+		}
+		return v, nil
+	}
+}
+
+// A service whose command is gone - an upgrade removed the file it names -
+// would never start again, and nothing else would say so (#182).
+func TestUnitWarning_ACommandThatIsGone(t *testing.T) {
+	got := unitWarning("/opt/old/tele", reportedVersions(nil), "2.0.0")
+
+	assertSays(t, got, "/opt/old/tele", "not there", "tele daemon install")
+}
+
+// A service whose command is another tele than this one would restart onto it.
+func TestUnitWarning_ACommandThatIsAnotherTele(t *testing.T) {
+	got := unitWarning("/opt/old/tele", reportedVersions(map[string]string{"/opt/old/tele": "2.0.0-beta.1"}), "2.0.0")
+
+	assertSays(t, got, "/opt/old/tele", "2.0.0-beta.1", "2.0.0", "tele daemon install")
+}
+
+// A service that runs this tele is as it should be.
+func TestUnitWarning_ACommandThatIsThisTele(t *testing.T) {
+	got := unitWarning("/opt/homebrew/bin/tele", reportedVersions(map[string]string{"/opt/homebrew/bin/tele": "2.0.0"}), "2.0.0")
+
+	if got != "" {
+		t.Errorf("warned %q", got)
+	}
+}
+
+// The warning is said whether or not a host answers: a service whose command
+// is gone is exactly one that does not (#182).
+func TestStatus_WarnsOfAnInstalledServiceWithNoHost(t *testing.T) {
+	_, cfg := isolatedHome(t)
+	var out bytes.Buffer
+	in := installing(&managed{runs: "/opt/old/tele"}, "", &out)
+	in.versionOf = reportedVersions(nil)
+
+	err := in.status(context.Background(), options{cfgPath: cfg})
+
+	var code *exitCode
+	if !errors.As(err, &code) || code.code != noHostCode {
+		t.Fatalf("got %v, want exit %d", err, noHostCode)
+	}
+	assertSays(t, out.String(), "/opt/old/tele", "not there")
 }
 
 // isolatedHome points the tele the test runs at a home of its own, with a

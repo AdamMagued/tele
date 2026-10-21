@@ -1,14 +1,18 @@
 package service
 
 import (
+	"bytes"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 // Manager registers units with the operating system's service manager.
@@ -19,6 +23,9 @@ type Manager interface {
 	// Uninstall stops the service named name and removes its unit. It reports
 	// false, and does nothing, when none is installed.
 	Uninstall(name string) (bool, error)
+	// Installed is the command the service named name runs, as its unit
+	// says; false when none is installed.
+	Installed(name string) (binary string, ok bool, err error)
 }
 
 // Runner runs a command of the service manager's. Its error carries what the
@@ -35,6 +42,12 @@ func Run(name string, args ...string) error {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
+}
+
+// Output runs a command of the service manager's for real, for what it
+// prints.
+func Output(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).Output()
 }
 
 // ErrUnsupported is a system tele has no service manager for. A host is run
@@ -54,7 +67,7 @@ func ForThisSystem(home string) (Manager, error) {
 		}
 		return Systemd{ConfigHome: config, Run: Run}, nil
 	case "windows":
-		return TaskScheduler{TempDir: os.TempDir(), Run: Run}, nil
+		return TaskScheduler{TempDir: os.TempDir(), Run: Run, Output: Output}, nil
 	default:
 		return nil, ErrUnsupported
 	}
@@ -108,6 +121,44 @@ func (m Launchd) Uninstall(name string) (bool, error) {
 	return true, nil
 }
 
+func (m Launchd) Installed(name string) (string, bool, error) {
+	doc, err := os.ReadFile(m.plist(name))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	// The first string after the ProgramArguments key is the command.
+	dec := xml.NewDecoder(bytes.NewReader(doc))
+	afterKey := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", false, fmt.Errorf("%s names no command", m.plist(name))
+		}
+		el, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		var text string
+		switch el.Name.Local {
+		case "key":
+			if err := dec.DecodeElement(&text, &el); err != nil {
+				return "", false, err
+			}
+			afterKey = text == "ProgramArguments"
+		case "string":
+			if err := dec.DecodeElement(&text, &el); err != nil {
+				return "", false, err
+			}
+			if afterKey {
+				return text, true, nil
+			}
+		}
+	}
+}
+
 // Systemd installs a unit as a systemd user unit, enabled for the person's
 // login.
 type Systemd struct {
@@ -155,12 +206,86 @@ func (m Systemd) Uninstall(name string) (bool, error) {
 	return true, m.Run("systemctl", "--user", "daemon-reload")
 }
 
+func (m Systemd) Installed(name string) (string, bool, error) {
+	doc, err := os.ReadFile(m.unit(name))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	for line := range strings.Lines(string(doc)) {
+		if cmd, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart="); ok {
+			return systemdUnquote(cmd), true, nil
+		}
+	}
+	return "", false, fmt.Errorf("%s names no command", m.unit(name))
+}
+
+// systemdUnquote reads the first argument of an ExecStart that systemdQuote
+// wrote.
+func systemdUnquote(cmd string) string {
+	if !strings.HasPrefix(cmd, `"`) {
+		first, _, _ := strings.Cut(cmd, " ")
+		return first
+	}
+	var b strings.Builder
+	for i := 1; i < len(cmd); i++ {
+		c := cmd[i]
+		switch {
+		case c == '\\' && i+1 < len(cmd):
+			i++
+			b.WriteByte(cmd[i])
+		case c == '"':
+			return b.String()
+		case (c == '%' || c == '$') && i+1 < len(cmd) && cmd[i+1] == c:
+			i++
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // TaskScheduler installs a unit as a Task Scheduler task started at logon: a
 // Windows service would run where no notification can be shown (ADR 0030).
 type TaskScheduler struct {
 	// TempDir is where the task's XML is written for schtasks to read.
 	TempDir string
 	Run     Runner
+	// Output runs a command for what it prints.
+	Output func(name string, args ...string) ([]byte, error)
+}
+
+func (m TaskScheduler) Installed(name string) (string, bool, error) {
+	printed, err := m.Output("schtasks", "/Query", "/TN", name, "/XML")
+	if err != nil {
+		return "", false, nil
+	}
+	var task struct {
+		Command string `xml:"Actions>Exec>Command"`
+	}
+	dec := xml.NewDecoder(strings.NewReader(fromUTF16(printed)))
+	// Whatever the declaration says, the text is UTF-8 by now.
+	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
+	if err := dec.Decode(&task); err != nil {
+		return "", false, fmt.Errorf("reading the task %s: %w", name, err)
+	}
+	return task.Command, true, nil
+}
+
+// fromUTF16 is b as text: UTF-16 when it starts with the little-endian byte
+// order mark, which is how schtasks may print, and UTF-8 otherwise.
+func fromUTF16(b []byte) string {
+	if len(b) < 2 || b[0] != 0xFF || b[1] != 0xFE {
+		return string(b)
+	}
+	units := make([]uint16, 0, len(b)/2)
+	for i := 2; i+1 < len(b); i += 2 {
+		units = append(units, uint16(b[i])|uint16(b[i+1])<<8)
+	}
+	return string(utf16.Decode(units))
 }
 
 func (m TaskScheduler) Install(u Unit) error {
