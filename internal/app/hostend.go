@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/ipc/serve"
@@ -28,14 +29,44 @@ type HostEnd struct {
 	// Nil until the host has an owner to hand it to: one opened later starts
 	// from the store as it is.
 	apply func(*config.Config)
+	// since is when the host started; clients and account are what it counts
+	// and tells of when asked how it is doing. Nil until there is something
+	// to count.
+	since   time.Time
+	clients func() int
+	account func() *wire.AccountStatus
 }
 
 var _ serve.Host = (*HostEnd)(nil)
 
 // NewHostEnd is the host's end over the config file in store, saying hello as
-// hello says.
+// hello says. The host starts now.
 func NewHostEnd(store *config.Store, hello wire.Hello) *HostEnd {
-	return &HostEnd{store: store, hello: hello}
+	return &HostEnd{store: store, hello: hello, since: time.Now()}
+}
+
+// StatusFrom sets what the host counts its clients with, and where it learns
+// how its account is doing.
+func (e *HostEnd) StatusFrom(clients func() int, account func() *wire.AccountStatus) {
+	e.mu.Lock()
+	e.clients, e.account = clients, account
+	e.mu.Unlock()
+}
+
+// Status is how the host is doing. The client asking is one of the clients
+// counted, and is left out: it is asking, not drawing (#208).
+func (e *HostEnd) Status() wire.HostStatus {
+	e.mu.Lock()
+	clients, account := e.clients, e.account
+	e.mu.Unlock()
+	s := wire.HostStatus{Since: e.since}
+	if clients != nil {
+		s.Clients = max(clients()-1, 0)
+	}
+	if account != nil {
+		s.Account = account()
+	}
+	return s
 }
 
 // ApplyTo sets what a config the host has just read is handed to.

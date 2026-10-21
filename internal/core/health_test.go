@@ -43,6 +43,9 @@ func TestHealth_SaysWhetherTheLinkIsUpAndSinceWhen(t *testing.T) {
 	now := clockAt(o, start)
 	assert.Equal(t, LinkUnknown, o.Health().Link, "not connected yet")
 
+	o.SetLink(false)
+	assert.Equal(t, LinkUnknown, o.Health().Link, "a link that was never up has not dropped")
+
 	o.SetLink(true)
 	*now = start.Add(time.Hour)
 	o.SetLink(true)

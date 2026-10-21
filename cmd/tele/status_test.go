@@ -1,0 +1,169 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sorokin-vladimir/tele/internal/hosting"
+	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
+	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
+)
+
+var statusNow = time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+
+// assertSays fails for every one of wants that text does not say.
+func assertSays(t *testing.T, text string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Errorf("status does not say %q:\n%s", want, text)
+		}
+	}
+}
+
+// Status says which tele hosts, what keeps it running and for how long, who is
+// attached, and how the account and its link to Telegram are doing (#208).
+func TestStatusText_SaysHowTheHostIsDoing(t *testing.T) {
+	host := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9", PID: 4242, Kept: wire.KeptByService}
+	mine := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9"}
+	status := wire.HostStatus{
+		Since:   statusNow.Add(-3 * time.Hour),
+		Clients: 2,
+		Account: &wire.AccountStatus{
+			Phase: wire.PhaseReady, User: "ada",
+			Link: wire.LinkUp, LinkSince: statusNow.Add(-time.Hour),
+			LastUpdate: statusNow.Add(-12 * time.Second),
+			Outbox:     1,
+		},
+	}
+
+	text := statusText("/state/tele", host, status, nil, mine, statusNow)
+
+	assertSays(t, text, "tele 2.0.0-beta.9", "pid 4242", "/state/tele", "service", "3h0m0s",
+		"2 windows", "ready", "@ada", "up", "1h0m0s ago", "12s ago", "1 waiting")
+	if strings.Contains(text, "This tele") {
+		t.Errorf("the same version is not compared:\n%s", text)
+	}
+}
+
+// A host that keeps nothing yet says so rather than inventing it.
+func TestStatusText_SaysWhatIsNotThereYet(t *testing.T) {
+	host := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev", PID: 7, Kept: wire.KeptByWindow}
+	status := wire.HostStatus{
+		Since:   statusNow,
+		Account: &wire.AccountStatus{Phase: wire.PhaseLoggingIn, Link: wire.LinkUnknown},
+	}
+
+	text := statusText("/s", host, status, nil, host, statusNow)
+
+	assertSays(t, text, "window", "no windows", "logging in", "not connected yet", "Last update: none", "0 waiting")
+}
+
+// Between one account and the next there is no account to tell of.
+func TestStatusText_BetweenAccounts(t *testing.T) {
+	host := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev", Kept: wire.KeptByDaemon}
+
+	text := statusText("/s", host, wire.HostStatus{Since: statusNow}, nil, host, statusNow)
+
+	assertSays(t, text, "tele daemon", "Account: none")
+}
+
+// A connection that ended says why.
+func TestStatusText_AnEndedConnectionSaysWhy(t *testing.T) {
+	host := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "dev", Kept: wire.KeptByService}
+	status := wire.HostStatus{Since: statusNow, Account: &wire.AccountStatus{
+		Phase: wire.PhaseConnecting, Ended: "account_banned", Link: wire.LinkDown, LinkSince: statusNow,
+	}}
+
+	text := statusText("/s", host, status, nil, host, statusNow)
+
+	assertSays(t, text, "ended", "account_banned", "down")
+}
+
+// Versions are compared, and what the difference means is said: a newer
+// window restarts a service, an older one is turned away by it.
+func TestStatusText_ComparesVersions(t *testing.T) {
+	service := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9", Kept: wire.KeptByService}
+	status := wire.HostStatus{Since: statusNow}
+
+	newer := statusText("/s", service, status, nil, wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0"}, statusNow)
+	assertSays(t, newer, "This tele is 2.0.0", "restart")
+
+	older := statusText("/s", service, status, nil, wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.1"}, statusNow)
+	assertSays(t, older, "This tele is 2.0.0-beta.1", "older")
+}
+
+// isolatedHome points the tele the test runs at a home of its own, with a
+// config naming an app key, and gives its state directory and config path.
+func isolatedHome(t *testing.T) (stateDir, cfg string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	cfg = filepath.Join(home, "config.yml")
+	if err := os.WriteFile(cfg, []byte("telegram:\n  api_id: 1\n  api_hash: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(home, "state", "tele"), cfg
+}
+
+// With no host to answer, status says so and exits 3, which a script can tell
+// from any other failure (#208).
+func TestStatusCommand_NoHostExitsThree(t *testing.T) {
+	bin := buildTele(t)
+	_, cfg := isolatedHome(t)
+
+	out, err := exec.Command(bin, "daemon", "status", "--config", cfg).CombinedOutput()
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Fatalf("tele daemon status with no host: %v, want exit 3\n%s", err, out)
+	}
+	assertSays(t, string(out), "No tele hosts")
+}
+
+// A host that answers is told of, and status exits 0.
+func TestStatusCommand_AHostThatAnswersIsToldOf(t *testing.T) {
+	bin := buildTele(t)
+	stateDir, cfg := isolatedHome(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	first, err := hosting.Reach(ctx, "tele", stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9", PID: 4242, Kept: wire.KeptByWindow}
+	srv := hosting.Serve(context.Background(), first.Listener, heldHost{other}, hosting.NewClients())
+	t.Cleanup(func() {
+		srv.Stop(time.Second)
+		first.Close()
+	})
+
+	out, err := exec.CommandContext(ctx, bin, "daemon", "status", "--config", cfg).CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("tele daemon status: %v\n%s", err, out)
+	}
+	assertSays(t, string(out), "tele 2.0.0-beta.9", "pid 4242")
+}
+
+// A host on another protocol is named by its hello alone: nothing else was
+// asked of it.
+func TestStatusText_AHostOnAnotherProtocolIsOnlyNamed(t *testing.T) {
+	host := wire.Hello{Protocol: wire.ProtocolVersion + 1, Binary: "3.0.0", PID: 9, Kept: wire.KeptByWindow}
+	mine := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0"}
+
+	text := statusText("/s", host, wire.HostStatus{}, &dial.Mismatch{Verdict: wire.Refuse, Host: host}, mine, statusNow)
+
+	assertSays(t, text, "tele 3.0.0", "pid 9", "This tele is 2.0.0", "cannot")
+	if strings.Contains(text, "Account") {
+		t.Errorf("a host on another protocol was not asked about its account:\n%s", text)
+	}
+}

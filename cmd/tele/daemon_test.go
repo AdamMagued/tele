@@ -26,6 +26,7 @@ func (h heldHost) Hello() wire.Hello                      { return h.hello }
 func (heldHost) Settings() wire.HostSettings              { return wire.HostSettings{} }
 func (heldHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResult{} }
 func (heldHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
+func (heldHost) Status() wire.HostStatus                  { return wire.HostStatus{} }
 
 // `tele daemon` only ever hosts: with the state directory already hosted by
 // another tele, it stops and names that tele by its pid and version (#208).

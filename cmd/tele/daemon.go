@@ -37,6 +37,7 @@ func newDaemonCmd(o *options) *cobra.Command {
 	// tells a host that it is a service, and nothing is inferred from the
 	// environment (#208).
 	cmd.Flags().BoolVar(&service, "service", false, "run as the service the service manager keeps running")
+	cmd.AddCommand(newStatusCmd(o))
 	return cmd
 }
 

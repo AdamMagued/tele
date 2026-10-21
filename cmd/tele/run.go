@@ -141,6 +141,7 @@ func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 		return nil, fmt.Errorf("init: %w", err)
 	}
 	end.ApplyTo(host.Apply)
+	end.StatusFrom(clients.Count, host.AccountStatus)
 	host.Start(ctx)
 	return h, nil
 }

@@ -40,7 +40,8 @@ func (o *Owner) Health() Health {
 }
 
 // SetLink records whether the connection to Telegram is up. Saying again what
-// is already so changes nothing, so the time it became so stands.
+// is already so changes nothing, so the time it became so stands; and a link
+// that was never up has not dropped, it is still connecting.
 func (o *Owner) SetLink(up bool) {
 	link := LinkDown
 	if up {
@@ -48,7 +49,7 @@ func (o *Owner) SetLink(up bool) {
 	}
 	o.health.mu.Lock()
 	defer o.health.mu.Unlock()
-	if o.health.h.Link == link {
+	if o.health.h.Link == link || (link == LinkDown && o.health.h.Link == LinkUnknown) {
 		return
 	}
 	o.health.h.Link = link

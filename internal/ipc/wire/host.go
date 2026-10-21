@@ -1,6 +1,9 @@
 package wire
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // The calls about the host rather than about an account. They are the
 // protocol's, like hello, and are answered whether or not an owner is seated,
@@ -15,6 +18,59 @@ const (
 	MethodSet = "$set"
 	// MethodReload asks the host to read its config file again.
 	MethodReload = "$reload"
+	// MethodStatus asks the host how it and its account are doing. It changes
+	// nothing, which is why it is asked of any host whose protocol is this
+	// one, whatever the two binaries' versions (#208).
+	MethodStatus = "$status"
+)
+
+// HostStatus is what the host answers MethodStatus with.
+type HostStatus struct {
+	// Since is when the host started.
+	Since time.Time `json:"since"`
+	// Clients is how many clients are attached, the one asking left out.
+	Clients int `json:"clients"`
+	// Account is how the account is doing, nil between one account and the
+	// next.
+	Account *AccountStatus `json:"account,omitempty"`
+}
+
+// AccountStatus is how the host's account is doing.
+type AccountStatus struct {
+	Phase Phase `json:"phase"`
+	// User is the logged-in user's username, empty until Telegram has said
+	// or when they have none.
+	User string `json:"user,omitempty"`
+	// Ended is what the connection ended with, in words, empty while it runs.
+	Ended string `json:"ended,omitempty"`
+	// Link is whether the link to Telegram is up, and LinkSince since when.
+	Link      Link      `json:"link"`
+	LinkSince time.Time `json:"link_since,omitzero"`
+	// LastUpdate is when the last update from Telegram arrived, zero when none
+	// has.
+	LastUpdate time.Time `json:"last_update,omitzero"`
+	// Outbox is how many sends have not gone out yet.
+	Outbox int `json:"outbox"`
+}
+
+// Phase is where the account stands.
+type Phase string
+
+const (
+	PhaseConnecting Phase = "connecting"
+	PhaseLoggingIn  Phase = "logging_in"
+	PhaseLoading    Phase = "loading"
+	PhaseReady      Phase = "ready"
+)
+
+// Link is whether the link to Telegram is up.
+type Link string
+
+const (
+	// LinkUnknown: the link has not come up yet.
+	LinkUnknown Link = "unknown"
+	LinkUp      Link = "up"
+	LinkDown    Link = "down"
 )
 
 // Warning is something wrong with one of the host's settings, as a client

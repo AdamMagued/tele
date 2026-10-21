@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,7 @@ type hostEnd struct {
 	settings wire.HostSettings
 	set      wire.SetResult
 	reload   wire.ReloadResult
+	status   wire.HostStatus
 
 	mu   sync.Mutex
 	sets []wire.SetParams
@@ -31,6 +33,7 @@ type hostEnd struct {
 func (h *hostEnd) Hello() wire.Hello           { return h.hello }
 func (h *hostEnd) Settings() wire.HostSettings { return h.settings }
 func (h *hostEnd) Reload() wire.ReloadResult   { return h.reload }
+func (h *hostEnd) Status() wire.HostStatus     { return h.status }
 func (h *hostEnd) SetSetting(p wire.SetParams) wire.SetResult {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -121,6 +124,83 @@ func TestHost_ReloadCrosses(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, host.reload, got)
+}
+
+// askStatusOf asks host how it is doing over a connection of its own, the way
+// `tele daemon status` does, as a client saying mine.
+func askStatusOf(t *testing.T, host *hostEnd, mine wire.Hello) (wire.Hello, wire.HostStatus, error) {
+	t.Helper()
+	client, end := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		_ = serve.Conn(ctx, end, core.NewAttachment(), host)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-served
+	})
+	return dial.AskStatus(ctx, client, mine)
+}
+
+// How the host is doing crosses as it is, with what the host said of itself
+// (#208).
+func TestAskStatus_TheHostSaysHowItIsDoing(t *testing.T) {
+	said := hello
+	said.Binary, said.PID, said.Kept = "2.0.0-beta.9", 4242, wire.KeptByService
+	since := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	host := &hostEnd{hello: said, status: wire.HostStatus{
+		Since:   since,
+		Clients: 2,
+		Account: &wire.AccountStatus{
+			Phase: wire.PhaseReady, User: "ada", Link: wire.LinkUp, LinkSince: since.Add(time.Minute),
+			LastUpdate: since.Add(time.Hour), Outbox: 3,
+		},
+	}}
+
+	gotHello, got, err := askStatusOf(t, host, hello)
+
+	require.NoError(t, err)
+	assert.Equal(t, said, gotHello)
+	assert.True(t, got.Since.Equal(since))
+	assert.Equal(t, 2, got.Clients)
+	require.NotNil(t, got.Account)
+	assert.Equal(t, wire.PhaseReady, got.Account.Phase)
+	assert.Equal(t, "ada", got.Account.User)
+	assert.Equal(t, wire.LinkUp, got.Account.Link)
+	assert.True(t, got.Account.LastUpdate.Equal(since.Add(time.Hour)))
+	assert.Equal(t, 3, got.Account.Outbox)
+}
+
+// A host on another protocol is not asked anything it might misread, but it
+// is still named by what it said in hello: knowing which tele is in the way is
+// the point of asking.
+func TestAskStatus_AHostOnAnotherProtocolIsOnlyNamed(t *testing.T) {
+	said := hello
+	said.Protocol, said.Binary = hello.Protocol+1, "3.0.0"
+	host := &hostEnd{hello: said, status: wire.HostStatus{Clients: 7}}
+
+	gotHello, _, err := askStatusOf(t, host, hello)
+
+	var other *dial.Mismatch
+	require.ErrorAs(t, err, &other)
+	assert.Equal(t, "3.0.0", gotHello.Binary)
+}
+
+// Asking how a service is doing never restarts it, whatever the versions:
+// only a window does that.
+func TestAskStatus_AnOlderServiceIsAskedNotRestarted(t *testing.T) {
+	said := hello
+	said.Binary, said.Kept = "2.0.0-beta.1", wire.KeptByService
+	mine := hello
+	mine.Binary = "2.0.0"
+	host := &hostEnd{hello: said, status: wire.HostStatus{Clients: 1}}
+
+	_, got, err := askStatusOf(t, host, mine)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.Clients)
 }
 
 // What was wrong with the host's settings when it started is said in its

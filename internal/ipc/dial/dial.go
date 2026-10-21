@@ -105,6 +105,58 @@ func Introduce(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (
 	return host, err
 }
 
+// AskStatus asks the host over conn how it is doing, without attaching: it
+// says hello, hears the host's, and asks. It changes nothing, so it asks any
+// host on this protocol, whatever the versions; a host on another one is not
+// asked anything it might misread, and answers with a *Mismatch beside its
+// hello (#208). conn is closed.
+func AskStatus(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (wire.Hello, wire.HostStatus, error) {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() { _ = conn.Close() }()
+	var status wire.HostStatus
+	host, dec, err := greet(conn, hello)
+	if err != nil {
+		return host, status, orCtx(ctx, err)
+	}
+	if host.Protocol != hello.Protocol {
+		return host, status, &Mismatch{Verdict: wire.Refuse, Host: host}
+	}
+	if err := wire.NewEncoder(conn).Encode(wire.Request(statusID, wire.MethodStatus, nil)); err != nil {
+		return host, status, orCtx(ctx, hostLost())
+	}
+	// Whatever else the host says before its answer is meant for a client
+	// drawing the account, which this is not.
+	for {
+		f, err := dec.Decode()
+		if err != nil {
+			return host, status, orCtx(ctx, hostLost())
+		}
+		if f.ID != statusID {
+			continue
+		}
+		if f.Error != nil {
+			return host, status, f.Error
+		}
+		if err := json.Unmarshal(f.Result, &status); err != nil {
+			return host, status, protocol.Violation(fmt.Errorf("%w: %s: %v", wire.ErrProtocol, wire.MethodStatus, err))
+		}
+		return host, status, nil
+	}
+}
+
+// statusID is the request id AskStatus asks under, the one after hello's.
+const statusID = helloID + 1
+
+// orCtx is err, or why ctx ended when it has: an ended ctx closes the
+// connection, and what the read then says is only the symptom.
+func orCtx(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 // helloID is the request id hello goes under: the first one.
 const helloID = 1
 

@@ -30,10 +30,16 @@ type options struct {
 }
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	err := newRootCmd().Execute()
+	if err == nil {
+		return
 	}
+	fmt.Fprintln(os.Stderr, err)
+	var code *exitCode
+	if errors.As(err, &code) {
+		os.Exit(code.code)
+	}
+	os.Exit(1)
 }
 
 // newRootCmd is tele: the window with no command, and the commands beside it.
