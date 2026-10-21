@@ -62,12 +62,20 @@ type GotdClient struct {
 	// recheck asks the main data centre whether it was (#297).
 	authorized atomic.Bool
 	recheck    recheck
+
+	// onLink is told whether the link to Telegram is up, nil when nobody
+	// listens.
+	onLink func(up bool)
 }
 
 // SetOnClockSkew installs the function told about clock skew: the skew when it
 // is found or moves, positive when the local clock is ahead, and zero when
 // messages get through again. It must not block. Set before Connect.
 func (c *GotdClient) SetOnClockSkew(report func(time.Duration)) { c.skew.SetReport(report) }
+
+// SetOnLink installs the function told whether the link to Telegram is up, on
+// every change. It must not block. Set before Connect.
+func (c *GotdClient) SetOnLink(report func(up bool)) { c.onLink = report }
 
 func NewGotdClient(log *zap.Logger, endpoint Endpoint, stateStorage updates.StateStorage, trace bool) *GotdClient {
 	traceLog := zap.NewNop()
@@ -211,6 +219,7 @@ func (c *GotdClient) Connect(ctx context.Context, af *AuthFlow, readyCh chan<- s
 				}
 			}()
 		},
+		link: c.onLink,
 	}
 
 	go func() {

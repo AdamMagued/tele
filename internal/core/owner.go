@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -50,7 +51,11 @@ type Owner struct {
 	clients   map[clientID]*seat
 	// acct is where the account stands: the login step, the connection, the
 	// clock (#309).
-	acct     accountState
+	acct accountState
+	// health is how the connection is doing, for whoever asks the host.
+	health health
+	// now is the owner's clock.
+	now      func() time.Time
 	readyCh  chan struct{}
 	onAuthFn func(userID int64, username string)
 	// selfName is the logged-in user's username, once known: a log out names
@@ -122,6 +127,7 @@ func New(cfg *config.Config, log *zap.Logger, st *state.State, client Connection
 		notifier:      n,
 		authFlow:      internaltg.NewAuthFlow(),
 		clients:       make(map[clientID]*seat),
+		now:           time.Now,
 		readyCh:       make(chan struct{}),
 		fetching:      make(map[subKey]bool),
 		repairing:     make(map[int64]bool),

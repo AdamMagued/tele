@@ -26,11 +26,17 @@ type reconnectResync struct {
 	force func()
 	// seenReady records whether the initial Ready has already been observed.
 	seenReady atomic.Bool
+	// link is told whether the link is up on every change, nil when nobody
+	// listens. It must not block either.
+	link func(up bool)
 }
 
-// onConnectionState is wired to telegram.Options.OnConnectionState. It forces a
-// resync on every Ready after the first.
+// onConnectionState is wired to telegram.Options.OnConnectionState. It tells
+// whether the link is up, and forces a resync on every Ready after the first.
 func (r *reconnectResync) onConnectionState(s telegram.ConnectionState) {
+	if r.link != nil {
+		r.link(s == telegram.ConnectionStateReady)
+	}
 	if s != telegram.ConnectionStateReady {
 		return
 	}

@@ -37,6 +37,7 @@ func (o *Owner) RunUpdates(ctx context.Context) {
 			return
 		case evt := <-o.events:
 			o.log.Debug("incoming update", zap.Int("kind", int(evt.Kind)))
+			o.heard()
 			o.handleEvent(evt)
 		}
 	}
