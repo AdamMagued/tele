@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -28,7 +29,12 @@ var waitForService = 30 * time.Second
 // has started it again; a client never becomes a host while it waits. Any
 // other host this client cannot use answers with a *dial.Mismatch (#183).
 func Attach(ctx context.Context, r Reached, hello wire.Hello) (*dial.Attachment, error) {
-	att, err := dial.Dial(ctx, r.Conn, hello)
+	// A client of a service waits for it when it goes, reaching it again at
+	// the same endpoint (#210).
+	redial := dial.Redial(func(ctx context.Context) (io.ReadWriteCloser, error) {
+		return ipc.Dial(ctx, r.Endpoint)
+	})
+	att, err := dial.Dial(ctx, r.Conn, hello, redial)
 	var mismatch *dial.Mismatch
 	if !errors.As(err, &mismatch) || mismatch.Verdict != wire.RestartHost {
 		return att, err
@@ -51,7 +57,7 @@ func Attach(ctx context.Context, r Reached, hello wire.Hello) (*dial.Attachment,
 	if err != nil {
 		return nil, err
 	}
-	att, err = dial.Dial(ctx, conn, hello)
+	att, err = dial.Dial(ctx, conn, hello, redial)
 	if errors.As(err, &mismatch) && mismatch.Verdict == wire.RestartHost {
 		return nil, fmt.Errorf("%w: it runs %s", ErrServiceStillOlder, mismatch.Host.Binary)
 	}

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 )
 
@@ -60,4 +61,18 @@ func TestClient_ALostHostIsToldApartFromABrokenOne(t *testing.T) {
 
 	assert.Equal(t, []any{ui.HostLostMsg{Quit: true}}, quit)
 	assert.Equal(t, []any{ui.HostLostMsg{Quit: false}}, broke)
+}
+
+// A service that said it was stopping and came back has not quit: its
+// stopping belongs to the restart, and whatever ends the link later is told
+// as it is. The model hears the wait and the return (#210).
+func TestClient_AServiceThatCameBackHasNotQuit(t *testing.T) {
+	got := bridged(t, func(s chan any) {
+		s <- core.HostStopping{Reason: core.StopRestart}
+		s <- dial.Reconnecting{}
+		s <- dial.Reconnected{}
+		close(s)
+	})
+
+	assert.Equal(t, []any{dial.Reconnecting{}, dial.Reconnected{}, ui.HostLostMsg{Quit: false}}, got)
 }

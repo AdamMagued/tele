@@ -19,6 +19,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/notices"
 	"github.com/sorokin-vladimir/tele/internal/settings"
@@ -273,6 +274,11 @@ func (c *Client) bridge(ctx context.Context) {
 			if _, ok := msg.(core.HostStopping); ok {
 				stopping = true
 				continue
+			}
+			// A service that stopped and came back has not quit: its stopping
+			// was the restart's (#210).
+			if _, ok := msg.(dial.Reconnected); ok {
+				stopping = false
 			}
 			c.hear(msg)
 			c.send(msg)

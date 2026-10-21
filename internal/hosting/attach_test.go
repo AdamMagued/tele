@@ -157,6 +157,31 @@ func TestAttach_AnOlderWindowLeavesANewerServiceAlone(t *testing.T) {
 	assert.Zero(t, m.restarted())
 }
 
+// A window attached to a service waits for it through a restart, and carries
+// on with the service started again (#210).
+func TestAttach_AWindowOutlivesItsServiceRestarting(t *testing.T) {
+	dir := stateDir(t)
+	m := runService(t, dir, "2.0.0")
+	a, err := attach(t, dir, "2.0.0")
+	require.NoError(t, err)
+
+	got, err := a.RestartHost(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, got.Refused)
+
+	deadline := time.After(5 * time.Second)
+	for back := false; !back; {
+		select {
+		case v, ok := <-a.Stream():
+			require.True(t, ok, "the window gave up on its service: %v", a.Lost())
+			_, back = v.(dial.Reconnected)
+		case <-deadline:
+			require.FailNow(t, "the window never got its service back")
+		}
+	}
+	assert.Equal(t, 1, m.restarted())
+}
+
 // The same version attaches as it always did.
 func TestAttach_TheSameVersionAttaches(t *testing.T) {
 	dir := stateDir(t)

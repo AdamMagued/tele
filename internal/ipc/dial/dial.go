@@ -12,21 +12,30 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sorokin-vladimir/tele/internal/core"
+	"github.com/sorokin-vladimir/tele/internal/core/project"
+	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/ipc/protocol"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/telerr"
 )
 
-// Attachment is an attachment over a connection.
+// Attachment is an attachment over a connection. Attached to a service, it
+// outlives the connection: when the service goes, it reaches it again and
+// carries on where it was (#210).
 type Attachment struct {
-	// host is what the host said of itself in hello.
-	host wire.Hello
-	conn io.ReadWriteCloser
-	enc  *wire.Encoder
+	// hello is what this client says of itself, again on every reattach.
+	hello wire.Hello
+	// redial reaches the host again, nil when this client never waits for it.
+	// pauseCap and giveUp are how it waits, settled when it attaches.
+	redial   func(context.Context) (io.ReadWriteCloser, error)
+	pauseCap time.Duration
+	giveUp   time.Duration
 	// nextID is the last request id used, nextSub the last subscription id.
-	// Both only grow, and both are this side's to choose.
+	// Both only grow, across connections too, and both are this side's to
+	// choose.
 	nextID  atomic.Uint64
 	nextSub atomic.Uint64
 
@@ -38,11 +47,60 @@ type Attachment struct {
 	closeOnce sync.Once
 
 	mu sync.Mutex
+	// host is what the host said of itself in its last hello.
+	host wire.Hello
+	// link is the connection the attachment runs over now.
+	link *link
 	// waiting holds the calls whose answer is still to come, by request id.
 	waiting map[uint64]chan wire.Frame
-	// lost is closed when the connection ends, and lostErr says why.
-	lost    chan struct{}
+	// subs are the client's subscriptions, and focus what it showed last:
+	// what it says again to a host it reaches again.
+	subs    map[project.SubID]project.Window
+	focus   domain.HistoryKey
+	focused bool
+	// lostErr says why the attachment ended, once its stream has.
 	lostErr error
+}
+
+// link is one connection an attachment runs over.
+type link struct {
+	conn io.ReadWriteCloser
+	enc  *wire.Encoder
+	// lost is closed when the connection ends, and why says why.
+	lost chan struct{}
+	why  *telerr.Error
+	// ready is closed once what the client held has been said again over
+	// the connection; the client's own calls wait for it, so none overtakes
+	// that.
+	ready chan struct{}
+}
+
+// newLink is a link over conn, ready for the client's calls.
+func newLink(conn io.ReadWriteCloser) *link {
+	l := &link{conn: conn, enc: wire.NewEncoder(conn), lost: make(chan struct{}), ready: make(chan struct{})}
+	close(l.ready)
+	return l
+}
+
+// await waits until l is ready for the client's calls, and reports false when
+// it was lost first.
+func (l *link) await() bool {
+	select {
+	case <-l.ready:
+		return true
+	case <-l.lost:
+		return false
+	}
+}
+
+// Option is something an attachment is dialled with.
+type Option func(*Attachment)
+
+// Redial reaches the host again, for an attachment to a service to wait for
+// it when it goes (#210). A redial is one attempt; the attachment tries again
+// until the service is back or it gives up.
+func Redial(redial func(context.Context) (io.ReadWriteCloser, error)) Option {
+	return func(a *Attachment) { a.redial = redial }
 }
 
 var _ core.Surface = (*Attachment)(nil)
@@ -62,7 +120,34 @@ func (m *Mismatch) Error() string {
 // Dial attaches over conn, which it owns from here: it says hello, hears the
 // host's, and decides whether the two understand each other. A host it does
 // not use answers with a *Mismatch, and conn is closed.
-func Dial(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (*Attachment, error) {
+func Dial(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello, opts ...Option) (*Attachment, error) {
+	host, dec, err := join(ctx, conn, hello)
+	if err != nil {
+		return nil, err
+	}
+	a := &Attachment{
+		hello:    hello,
+		host:     host,
+		link:     newLink(conn),
+		stream:   make(chan any, core.StreamSize),
+		closed:   make(chan struct{}),
+		waiting:  map[uint64]chan wire.Frame{},
+		subs:     map[project.SubID]project.Window{},
+		pauseCap: reattachPauseCap,
+		giveUp:   giveUpAfter,
+	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	a.nextID.Store(helloID)
+	go a.read(a.link, dec)
+	return a, nil
+}
+
+// join says hello over conn, which it owns from here, hears the host's, and
+// decides whether the two understand each other. A host this client does not
+// use answers with a *Mismatch, and conn is closed.
+func join(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (wire.Hello, *wire.Decoder, error) {
 	// Hello is said before anything reads the connection, so its answer is
 	// read here; a ctx that ends first closes conn, which ends the wait.
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -70,26 +155,15 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (*Atta
 	if !stop() || err != nil {
 		_ = conn.Close()
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return host, nil, ctx.Err()
 		}
-		return nil, err
+		return host, nil, err
 	}
 	if v := wire.Decide(hello, host); v != wire.Proceed {
 		_ = conn.Close()
-		return nil, &Mismatch{Verdict: v, Host: host}
+		return host, nil, &Mismatch{Verdict: v, Host: host}
 	}
-	a := &Attachment{
-		host:    host,
-		conn:    conn,
-		enc:     wire.NewEncoder(conn),
-		stream:  make(chan any, core.StreamSize),
-		closed:  make(chan struct{}),
-		waiting: map[uint64]chan wire.Frame{},
-		lost:    make(chan struct{}),
-	}
-	a.nextID.Store(helloID)
-	go a.read(dec)
-	return a, nil
+	return host, dec, nil
 }
 
 // Introduce says hello over conn and hears the host's, without attaching: what
@@ -224,14 +298,35 @@ func greet(conn io.ReadWriter, hello wire.Hello) (wire.Hello, *wire.Decoder, err
 // process carries.
 func (a *Attachment) Stream() <-chan any { return a.stream }
 
-// Host is what the host said of itself when the client attached: its
-// versions, and the config file it reads.
-func (a *Attachment) Host() wire.Hello { return a.host }
+// Host is what the host said of itself when the client attached, or attached
+// again last: its versions, and the config file it reads.
+func (a *Attachment) Host() wire.Hello {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.host
+}
+
+// Lost is why the attachment ended, once its stream has: the connection
+// ending, the host saying why it went, ErrGaveUp for a service that did not
+// come back, or a *Mismatch for one that came back as a tele this client does
+// not use.
+func (a *Attachment) Lost() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.lostErr
+}
 
 // Close ends the attachment: the client is gone.
 func (a *Attachment) Close() error {
 	a.closeOnce.Do(func() { close(a.closed) })
-	return a.conn.Close()
+	return a.current().conn.Close()
+}
+
+// current is the link the attachment runs over now.
+func (a *Attachment) current() *link {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.link
 }
 
 // hostLost is what a call answers when the connection ended: the host may be
@@ -245,25 +340,51 @@ func hostLost() *telerr.Error {
 // that is not draining its stream holds this up, and the host with it, as it
 // would hold up an attachment in the host's own process.
 //
-// When it ends, every call waiting and every call after is answered with why,
-// and the stream ends, which is how its holder hears of it.
-func (a *Attachment) read(dec *wire.Decoder) {
-	why, broke := a.readUntilEnd(dec)
-	a.mu.Lock()
-	a.lostErr = why
-	close(a.lost)
-	a.mu.Unlock()
-	close(a.stream)
-	if broke {
-		_ = a.enc.Encode(wire.Fail(0, why))
+// When a connection ends, every call waiting on it and every call after is
+// answered with why. A client of a service then waits for it to come back
+// over a new connection; for anyone else, or once waiting is over, the stream
+// ends, which is how its holder hears of it.
+func (a *Attachment) read(l *link, dec *wire.Decoder) {
+	for {
+		why, broke := a.readUntilEnd(l, dec)
+		a.drop(l, why, broke)
+		if broke || !a.waitsForHost() {
+			a.end(why)
+			return
+		}
+		next, nextDec, err := a.reattach()
+		if err != nil {
+			a.end(err)
+			return
+		}
+		l, dec = next, nextDec
 	}
-	_ = a.conn.Close()
 }
 
-// readUntilEnd reads until the connection ends, and says why it did. broke
+// drop gives up l, which ended for why.
+func (a *Attachment) drop(l *link, why *telerr.Error, broke bool) {
+	a.mu.Lock()
+	l.why = why
+	close(l.lost)
+	a.mu.Unlock()
+	if broke {
+		_ = l.enc.Encode(wire.Fail(0, why))
+	}
+	_ = l.conn.Close()
+}
+
+// end ends the attachment for why: its stream ends.
+func (a *Attachment) end(why error) {
+	a.mu.Lock()
+	a.lostErr = why
+	a.mu.Unlock()
+	close(a.stream)
+}
+
+// readUntilEnd reads l until the connection ends, and says why it did. broke
 // says the host broke the protocol, which it is told before the connection
 // goes.
-func (a *Attachment) readUntilEnd(dec *wire.Decoder) (why *telerr.Error, broke bool) {
+func (a *Attachment) readUntilEnd(l *link, dec *wire.Decoder) (why *telerr.Error, broke bool) {
 	for {
 		f, err := dec.Decode()
 		if err != nil {
@@ -330,10 +451,13 @@ func (a *Attachment) roundTrip(ctx context.Context, method string, params json.R
 	id := a.nextID.Add(1)
 	answer := make(chan wire.Frame, 1)
 	a.mu.Lock()
+	l := a.link
 	select {
-	case <-a.lost:
+	case <-l.lost:
+		// The host is away, or gone for good: the call is not kept for a
+		// host that may never answer it.
 		a.mu.Unlock()
-		return nil, a.lostErr
+		return nil, l.why
 	default:
 	}
 	a.waiting[id] = answer
@@ -344,7 +468,10 @@ func (a *Attachment) roundTrip(ctx context.Context, method string, params json.R
 		a.mu.Unlock()
 	}()
 
-	if err := a.enc.Encode(wire.Request(id, method, params)); err != nil {
+	if !l.await() {
+		return nil, l.why
+	}
+	if err := l.enc.Encode(wire.Request(id, method, params)); err != nil {
 		return nil, hostLost()
 	}
 	select {
@@ -354,10 +481,10 @@ func (a *Attachment) roundTrip(ctx context.Context, method string, params json.R
 		}
 		return f.Result, nil
 	case <-ctx.Done():
-		_ = a.enc.Encode(wire.Cancel(id))
+		_ = l.enc.Encode(wire.Cancel(id))
 		return nil, ctx.Err()
-	case <-a.lost:
-		return nil, a.lostErr
+	case <-l.lost:
+		return nil, l.why
 	}
 }
 
@@ -401,12 +528,21 @@ func (a *Attachment) ReloadHost(ctx context.Context) (wire.ReloadResult, error) 
 }
 
 // tell makes method with args and does not wait: it has nothing to answer.
+// While the host is away it is said to nobody; what of it matters to a host
+// reached again is said again then.
 func (a *Attachment) tell(method string, args ...any) {
+	l := a.current()
+	if l.await() {
+		a.tellOver(l, method, args...)
+	}
+}
+
+func (a *Attachment) tellOver(l *link, method string, args ...any) {
 	params, err := protocol.Calls[method].Params(args...)
 	if err != nil {
 		return
 	}
-	_ = a.enc.Encode(wire.Request(a.nextID.Add(1), method, params))
+	_ = l.enc.Encode(wire.Request(a.nextID.Add(1), method, params))
 }
 
 func do(a *Attachment, ctx context.Context, method string, args ...any) error {
