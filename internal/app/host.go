@@ -105,7 +105,32 @@ func (h *Host) connectionEnded(ctx context.Context, acct *account) func(error) {
 			// On a goroutine of its own: ending the account waits for this one,
 			// which is still the connection's.
 			go h.endAccount(ctx, acct, reason)
+			return
 		}
+		if telerr.Of(err) == telerr.AccountBanned {
+			h.tellNobodyWatching(bannedNotice)
+		}
+	}
+}
+
+// What the desktop is told when the account stops delivering with no window
+// open to say so (#211).
+const (
+	loggedOutNotice = "tele was logged out, and no longer delivers messages. Open tele to log in again."
+	bannedNotice    = "Telegram has banned the account tele was logged in to, and tele no longer delivers messages."
+)
+
+// tellNobodyWatching raises a desktop notification saying body when no client
+// is attached to say it instead. It is not a notification about a chat: it
+// goes through no notification decision, and the desktop sink's setting does
+// not reach it, since it is the one way to learn the service stopped
+// delivering (#211).
+func (h *Host) tellNobodyWatching(body string) {
+	if h.clients.Count() > 0 {
+		return
+	}
+	if err := h.notifier.Notify("tele", body); err != nil {
+		h.log.Warn("the desktop could not be told the account stopped delivering", zap.Error(err))
 	}
 }
 
@@ -130,6 +155,7 @@ func (h *Host) endAccount(ctx context.Context, acct *account, reason core.EndRea
 		return
 	}
 	discarded := acct.owner.UnsentCount()
+	h.tellNobodyWatching(loggedOutNotice)
 	h.clients.Leave(core.AccountEnded{Reason: reason, Discarded: discarded})
 	acct.stop()
 
