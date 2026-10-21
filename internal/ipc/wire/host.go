@@ -28,6 +28,18 @@ const (
 	MethodRestart = "$restart"
 )
 
+// MethodUninstall tells a service it is being uninstalled: the stop its
+// service manager makes next is for good, and it says so to its clients
+// (#182).
+const MethodUninstall = "$uninstall"
+
+// UninstallResult is what the host said to MethodUninstall.
+type UninstallResult struct {
+	// Refused says why the host is not one to uninstall. Empty when it took
+	// note.
+	Refused string `json:"refused,omitempty"`
+}
+
 // RestartResult is what the host said to MethodRestart. A refusal is an
 // answer, not a failure of the call.
 type RestartResult struct {

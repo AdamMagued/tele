@@ -28,6 +28,7 @@ func (helloHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResu
 func (helloHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
 func (helloHost) Status() wire.HostStatus                  { return wire.HostStatus{} }
 func (helloHost) Restart() wire.RestartResult              { return wire.RestartResult{} }
+func (helloHost) Uninstall() wire.UninstallResult          { return wire.UninstallResult{} }
 
 // rawClient is a client the test plays by hand, against a host serving a
 // real attachment.

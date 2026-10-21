@@ -86,6 +86,17 @@ func TestClient_AServiceThatCameBackHasNotQuit(t *testing.T) {
 	assert.Equal(t, []any{ui.HostAwayMsg{}, ui.HostBackMsg{}, ui.HostLostMsg{Quit: false}}, got)
 }
 
+// A service that stopped because it was uninstalled is told as such: the
+// window has nothing to wait for (#182).
+func TestClient_AnUninstalledServiceIsTold(t *testing.T) {
+	got := bridged(t, func(s chan any) {
+		s <- core.HostStopping{Reason: core.StopUninstalled}
+		close(s)
+	})
+
+	assert.Equal(t, []any{ui.HostLostMsg{Quit: true, Uninstalled: true}}, got)
+}
+
 // A service given up on, or one that came back newer than this window, is
 // told as such, for the window to say so (#210, #183).
 func TestClient_WhyTheServiceWasLostIsTold(t *testing.T) {

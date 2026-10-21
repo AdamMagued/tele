@@ -58,6 +58,8 @@ type Attachment struct {
 	subs    map[project.SubID]project.Window
 	focus   domain.HistoryKey
 	focused bool
+	// uninstalled is set when the service said it stops for good.
+	uninstalled bool
 	// lostErr says why the attachment ended, once its stream has.
 	lostErr error
 }
@@ -222,6 +224,22 @@ func AskRestart(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) 
 			return result, orCtx(ctx, nil)
 		}
 	}
+}
+
+// AskUninstall tells the host over conn that it is being uninstalled, without
+// attaching (#182). Only a service takes note; it is stopped afterwards by
+// its service manager, not by this. conn is closed.
+func AskUninstall(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (wire.UninstallResult, error) {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() { _ = conn.Close() }()
+	var result wire.UninstallResult
+	_, dec, err := greet(conn, hello)
+	if err != nil {
+		return result, orCtx(ctx, err)
+	}
+	err = askOnce(ctx, conn, dec, wire.MethodUninstall, &result)
+	return result, err
 }
 
 // askOnce asks method of the host over conn, once hello is behind it, and
@@ -417,6 +435,11 @@ func (a *Attachment) readUntilEnd(l *link, dec *wire.Decoder) (why *telerr.Error
 			v, err := protocol.Unframe(f)
 			if err != nil {
 				return protocol.Violation(err), true
+			}
+			if s, ok := v.(core.HostStopping); ok && s.Reason == core.StopUninstalled {
+				a.mu.Lock()
+				a.uninstalled = true
+				a.mu.Unlock()
 			}
 			select {
 			case a.stream <- v:

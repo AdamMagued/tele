@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/core/project"
 	"github.com/sorokin-vladimir/tele/internal/domain"
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
@@ -162,6 +163,34 @@ func TestReattach_OnlyAServiceIsWaitedFor(t *testing.T) {
 	lost, ok := telerr.As(a.Lost())
 	require.True(t, ok, "got %v", a.Lost())
 	assert.Equal(t, telerr.Network, lost.Kind)
+}
+
+// A service that said it stops because it was uninstalled will not come back:
+// it is not waited for (#182).
+func TestReattach_AnUninstalledServiceIsNotWaitedFor(t *testing.T) {
+	dial.ReattachFor(t, 20*time.Millisecond, 3*time.Second)
+	rec := newRecorder()
+	conn, drop := hostOn(t, rec, service("2.0.0"))
+	back := make(comingBack, 1)
+	a := attachTo(t, conn, service("2.0.0"), back)
+	again, _ := hostOn(t, newRecorder(), service("2.0.0"))
+	back <- again
+
+	rec.stream <- core.HostStopping{Reason: core.StopUninstalled}
+	until[core.HostStopping](t, a)
+	drop()
+
+	deadline := time.After(3 * time.Second)
+	for ended := false; !ended; {
+		select {
+		case v, ok := <-a.Stream():
+			ended = !ok
+			_, waiting := v.(dial.Reconnecting)
+			require.False(t, waiting, "a client waited for an uninstalled service")
+		case <-deadline:
+			require.FailNow(t, "the stream did not end")
+		}
+	}
 }
 
 // A service that does not come back in time is given up on: something is

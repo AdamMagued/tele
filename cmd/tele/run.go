@@ -87,6 +87,9 @@ func (r run) daemon(ctx context.Context, kept wire.Keeper) error {
 	r.log.Info("hosting with no window", zap.String("state_dir", r.cfgStore.Current().StateDir))
 	select {
 	case <-ctx.Done():
+		// Told to quit, by a person or by the service manager; for good, when
+		// the service was told it is being uninstalled first (#182).
+		h.stop(h.stopReason())
 		return nil
 	case <-h.restart:
 		r.log.Info("restarting, as a newer tele asked")
@@ -111,6 +114,8 @@ type hosted struct {
 	restart chan struct{}
 	// stop stops the host for reason. Only the first call stops it.
 	stop func(reason core.StopReason)
+	// stopReason is why the host stops when told to quit.
+	stopReason func() core.StopReason
 }
 
 // startHost makes this process the host of the endpoint it reached, kept
@@ -124,7 +129,7 @@ func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 	hello.Kept = kept
 	hello.PID = os.Getpid()
 	end := app.NewHostEnd(r.cfgStore, hello)
-	h := &hosted{clients: clients, restart: make(chan struct{})}
+	h := &hosted{clients: clients, restart: make(chan struct{}), stopReason: end.StopReason}
 	// Before the endpoint is served: a newer client may ask the moment it
 	// attaches, and the restart waits for the start to finish.
 	var restartOnce sync.Once

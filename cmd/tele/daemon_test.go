@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,6 +31,7 @@ func (heldHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResul
 func (heldHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
 func (heldHost) Status() wire.HostStatus                  { return wire.HostStatus{} }
 func (heldHost) Restart() wire.RestartResult              { return wire.RestartResult{} }
+func (heldHost) Uninstall() wire.UninstallResult          { return wire.UninstallResult{} }
 
 // `tele daemon` only ever hosts: with the state directory already hosted by
 // another tele, it stops and names that tele by its pid and version (#208).
@@ -219,6 +222,72 @@ func TestDaemonCommand_AServiceRestartsWhenAsked(t *testing.T) {
 	var exit *exec.ExitError
 	if err := cmd.Wait(); !errors.As(err, &exit) || exit.ExitCode() != restartCode {
 		t.Fatalf("the service exited with %v, want %d", err, restartCode)
+	}
+}
+
+// A service told it is being uninstalled, then stopped by its service
+// manager, tells its clients it stopped for good (#182).
+func TestDaemonCommand_AnUninstalledServiceSaysSoWhenStopped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a process is stopped with a signal only where there are signals")
+	}
+	bin := buildTele(t)
+	stateDir, cfg := isolatedHome(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "daemon", "--service", "--config", cfg)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	lines := make(chan string, 100)
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			lines <- s.Text()
+		}
+		close(lines)
+	}()
+	waitForLine(t, lines, "hosts")
+	ep, err := ipc.EndpointFor("tele", stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := wire.Hello{Protocol: wire.ProtocolVersion, Binary: builtVersion}
+	conn, err := ipc.Dial(ctx, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := dial.Dial(ctx, conn, mine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	told, err := ipc.Dial(ctx, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := dial.AskUninstall(ctx, told, mine)
+	if err != nil || got.Refused != "" {
+		t.Fatalf("the service did not take note: %v %q", err, got.Refused)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+
+	var reason core.StopReason
+	for msg := range a.Stream() {
+		if s, ok := msg.(core.HostStopping); ok {
+			reason = s.Reason
+		}
+	}
+	if reason != core.StopUninstalled {
+		t.Fatalf("the client heard the service stop for %q, want %q", reason, core.StopUninstalled)
 	}
 }
 

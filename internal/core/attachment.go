@@ -140,6 +140,9 @@ const (
 	// StopRestart: a newer client asked the service to restart, and its service
 	// manager starts it again on the binary installed now (#183).
 	StopRestart StopReason = "restart"
+	// StopUninstalled: the service was uninstalled, and nothing starts it
+	// again. Its clients do not wait for it (#182).
+	StopUninstalled StopReason = "uninstalled"
 )
 
 // Tell tells the client something from the host. Unlike the owner's events it

@@ -258,7 +258,7 @@ func (c *Client) nextScreenDir() string {
 // When the stream ends, the host is gone, and the model is told whether it
 // quit - it said it was stopping, last - or the link broke (#208).
 func (c *Client) bridge(ctx context.Context) {
-	stopping := false
+	stopping, uninstalled := false, false
 	for {
 		select {
 		case <-ctx.Done():
@@ -270,12 +270,15 @@ func (c *Client) bridge(ctx context.Context) {
 					// fault here, not a host that went away.
 					c.c.Log.Error("the link to this process's own host broke")
 				}
-				c.send(hostLost(stopping, c.c.Attachment.Lost()))
+				lost := hostLost(stopping, c.c.Attachment.Lost())
+				lost.Uninstalled = uninstalled
+				c.send(lost)
 				return
 			}
-			switch msg.(type) {
+			switch m := msg.(type) {
 			case core.HostStopping:
 				stopping = true
+				uninstalled = m.Reason == core.StopUninstalled
 				continue
 			case dial.Reconnecting:
 				c.send(ui.HostAwayMsg{})

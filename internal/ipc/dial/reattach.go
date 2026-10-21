@@ -49,14 +49,17 @@ func serviceReturn(goos string) time.Duration {
 const firstPause = 100 * time.Millisecond
 
 // waitsForHost reports whether this client waits for its host when it goes:
-// only a service is started again, so only a client of one does (#210).
+// only a service is started again, so only a client of one does, and not of
+// one that said it was uninstalled (#210, #182).
 func (a *Attachment) waitsForHost() bool {
 	select {
 	case <-a.closed:
 		return false
 	default:
 	}
-	return a.redial != nil && a.Host().Kept == wire.KeptByService
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.redial != nil && a.host.Kept == wire.KeptByService && !a.uninstalled
 }
 
 // reattach waits for the service to come back, and joins it: the next link and

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/ipc/serve"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/settings"
@@ -37,6 +38,9 @@ type HostEnd struct {
 	account func() *wire.AccountStatus
 	// restart stops the host to be started again, nil while nothing would.
 	restart func()
+	// uninstalled is set once the host, a service, was told it is being
+	// uninstalled.
+	uninstalled bool
 }
 
 var _ serve.Host = (*HostEnd)(nil)
@@ -78,6 +82,30 @@ func (e *HostEnd) Restart() wire.RestartResult {
 	}
 	restart()
 	return wire.RestartResult{}
+}
+
+// Uninstall takes note that the host, a service, is being uninstalled: the
+// stop its service manager makes next is for good. Any other host is not one
+// to uninstall, and refuses (#182).
+func (e *HostEnd) Uninstall() wire.UninstallResult {
+	if e.hello.Kept != wire.KeptByService {
+		return wire.UninstallResult{Refused: "this tele is not a service"}
+	}
+	e.mu.Lock()
+	e.uninstalled = true
+	e.mu.Unlock()
+	return wire.UninstallResult{}
+}
+
+// StopReason is why the host stops when it is told to quit: for good, once it
+// was told it is being uninstalled.
+func (e *HostEnd) StopReason() core.StopReason {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.uninstalled {
+		return core.StopUninstalled
+	}
+	return core.StopQuit
 }
 
 // Status is how the host is doing. The client asking is one of the clients

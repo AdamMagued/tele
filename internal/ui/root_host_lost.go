@@ -12,6 +12,9 @@ type HostLostMsg struct {
 	Quit      bool
 	GaveUp    bool
 	UpdatedTo string
+	// Uninstalled says the service was uninstalled, and nothing starts it
+	// again (#182).
+	Uninstalled bool
 }
 
 // handleHostLost leaves the window with nothing to show but why: a window
@@ -23,6 +26,8 @@ func (m RootModel) handleHostLost(msg HostLostMsg) (RootModel, tea.Cmd) {
 	}
 	var cause string
 	switch {
+	case msg.Uninstalled:
+		cause = "The tele service holding this account was uninstalled.\n`tele daemon install` installs it again."
 	case msg.UpdatedTo != "":
 		cause = "tele was updated: the service holding this account now runs " + msg.UpdatedTo + "."
 	case msg.GaveUp:

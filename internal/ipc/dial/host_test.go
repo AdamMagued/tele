@@ -20,15 +20,17 @@ import (
 // hostEnd answers the calls about the host with what it was given, and keeps
 // what it was asked.
 type hostEnd struct {
-	hello    wire.Hello
-	settings wire.HostSettings
-	set      wire.SetResult
-	reload   wire.ReloadResult
-	status   wire.HostStatus
-	restart  wire.RestartResult
+	hello     wire.Hello
+	settings  wire.HostSettings
+	set       wire.SetResult
+	reload    wire.ReloadResult
+	status    wire.HostStatus
+	restart   wire.RestartResult
+	uninstall wire.UninstallResult
 
-	mu   sync.Mutex
-	sets []wire.SetParams
+	mu          sync.Mutex
+	uninstalled bool
+	sets        []wire.SetParams
 }
 
 func (h *hostEnd) Hello() wire.Hello           { return h.hello }
@@ -36,6 +38,12 @@ func (h *hostEnd) Settings() wire.HostSettings { return h.settings }
 func (h *hostEnd) Reload() wire.ReloadResult   { return h.reload }
 func (h *hostEnd) Status() wire.HostStatus     { return h.status }
 func (h *hostEnd) Restart() wire.RestartResult { return h.restart }
+func (h *hostEnd) Uninstall() wire.UninstallResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.uninstalled = true
+	return h.uninstall
+}
 func (h *hostEnd) SetSetting(p wire.SetParams) wire.SetResult {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -147,6 +155,31 @@ func TestHost_ARestartRefusedIsAnAnswer(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "kept running by its window", got.Refused)
+}
+
+// Uninstalling tells the service first, over a connection of its own, so that
+// it stops as uninstalled when its service manager stops it (#182).
+func TestAskUninstall_TheServiceIsTold(t *testing.T) {
+	host := &hostEnd{hello: service("2.0.0")}
+	client, end := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		_ = serve.Conn(ctx, end, core.NewAttachment(), host)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-served
+	})
+
+	got, err := dial.AskUninstall(ctx, client, hello)
+
+	require.NoError(t, err)
+	assert.Empty(t, got.Refused)
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	assert.True(t, host.uninstalled)
 }
 
 // askStatusOf asks host how it is doing over a connection of its own, the way

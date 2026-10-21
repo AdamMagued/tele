@@ -114,6 +114,17 @@ func TestHostLost_AServiceGivenUpOnPointsToStatus(t *testing.T) {
 	assert.Contains(t, view, "Start tele again")
 }
 
+// An uninstalled service is named as such, and the way to have it back.
+func TestHostLost_AnUninstalledServiceSaysSo(t *testing.T) {
+	m := awayChat(t)
+
+	m, _ = update(m, HostLostMsg{Quit: true, Uninstalled: true})
+
+	view := m.View().Content
+	assert.Contains(t, view, "uninstalled")
+	assert.Contains(t, view, "tele daemon install")
+}
+
 // A service that came back newer than this window turns it away: tele was
 // updated (#183).
 func TestHostLost_AnUpdatedServiceSaysTeleWasUpdated(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/store"
 )
@@ -75,6 +76,32 @@ func TestHostEnd_OnlyAServiceRestarts(t *testing.T) {
 
 		assert.NotEmpty(t, got.Refused, kept)
 		assert.Zero(t, *restarts, kept)
+	}
+}
+
+// A service told it is being uninstalled says so when it stops, which is
+// what its service manager makes it do next: its clients do not wait for a
+// service that will not come back (#182).
+func TestHostEnd_AServiceBeingUninstalledStopsAsUninstalled(t *testing.T) {
+	e, _ := restartingEnd(t, wire.KeptByService)
+	assert.Equal(t, core.StopQuit, e.StopReason(), "before anyone says otherwise")
+
+	got := e.Uninstall()
+
+	assert.Empty(t, got.Refused)
+	assert.Equal(t, core.StopUninstalled, e.StopReason())
+}
+
+// Only a service is uninstalled: any other host refuses, and stops as it
+// would have.
+func TestHostEnd_OnlyAServiceIsUninstalled(t *testing.T) {
+	for _, kept := range []wire.Keeper{wire.KeptByWindow, wire.KeptByDaemon} {
+		e, _ := restartingEnd(t, kept)
+
+		got := e.Uninstall()
+
+		assert.NotEmpty(t, got.Refused, kept)
+		assert.Equal(t, core.StopQuit, e.StopReason(), kept)
 	}
 }
 
