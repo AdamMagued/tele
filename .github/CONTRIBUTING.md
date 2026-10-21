@@ -37,7 +37,7 @@ mise run hooks      # installs git hooks via lefthook
 Run the app against a local dev config:
 
 ```sh
-mise run dev        # go run ./cmd/tele/ -config .config/tele/config.yml
+mise run dev        # go run ./cmd/tele/ --config .config/tele/config.yml
 mise run dev-e      # same, with debug logging
 ```
 

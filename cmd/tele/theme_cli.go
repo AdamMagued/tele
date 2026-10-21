@@ -9,23 +9,22 @@ import (
 )
 
 // optionalArg is a flag that may be given bare (--theme-dump) or with a value
-// (--theme-dump=light). The flag package allows this through the IsBoolFlag
-// interface: a bare occurrence arrives at Set as "true", which is how "given,
-// with no value" is spelled here.
-//
-// These are flags rather than subcommands because tele has no subcommands yet
-// and is due to move to cobra; a flag becomes one there without a rewrite.
+// (--theme-dump=light). A bare occurrence arrives at Set as bareArg, the
+// flag's NoOptDefVal, which is how "given, with no value" is spelled here.
 type optionalArg struct {
 	set   bool
 	value string
 }
 
-func (o *optionalArg) String() string   { return o.value }
-func (o *optionalArg) IsBoolFlag() bool { return true }
+// bareArg is what a bare optionalArg is set to.
+const bareArg = "true"
+
+func (o *optionalArg) String() string { return o.value }
+func (o *optionalArg) Type() string   { return "theme" }
 
 func (o *optionalArg) Set(s string) error {
 	o.set = true
-	if s != "true" {
+	if s != bareArg {
 		o.value = strings.TrimSpace(s)
 	}
 	return nil

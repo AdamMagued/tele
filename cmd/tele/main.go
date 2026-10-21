@@ -1,20 +1,17 @@
 package main
 
 import (
-	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
+
+	"github.com/spf13/cobra"
 
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
-	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/ui/keys"
-	"github.com/sorokin-vladimir/tele/internal/ui/theme"
 	"github.com/sorokin-vladimir/tele/internal/version"
 )
 
@@ -25,74 +22,98 @@ var (
 	appName      = "tele" // injected via -ldflags for the beta channel
 )
 
+// options are the flags every command shares.
+type options struct {
+	cfgPath string
+	verbose bool
+	trace   bool
+}
+
 func main() {
-	cfgPath := flag.String("config", defaultConfigPath(appName), "path to config file")
-	verbose := flag.Bool("e", false, "debug logging")
-	trace := flag.Bool("trace", false, "log sensitive metadata (peer IDs, message lengths) — never use in shared environments")
-	versionFlag := flag.Bool("version", false, "print version and exit")
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// newRootCmd is tele: the window with no command, and the commands beside it.
+func newRootCmd() *cobra.Command {
+	var o options
 	var themeCheck, themeDump optionalArg
-	flag.Var(&themeCheck, "theme-check", "print which theme each slot resolved to and where its tokens came from, then exit; give a theme name to inspect one")
-	flag.Var(&themeDump, "theme-dump", "print a slot's theme (dark or light) as a complete theme file, then exit; give a theme name to dump one")
-	flag.Parse()
-
-	if *versionFlag {
-		fmt.Println(version.Version)
-		os.Exit(0)
+	var printVersion bool
+	root := &cobra.Command{
+		Use:           appName,
+		Short:         "A terminal Telegram client",
+		Args:          cobra.NoArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(*cobra.Command, []string) error {
+			if printVersion {
+				fmt.Println(version.Version)
+				return nil
+			}
+			return runWindow(o, themeCheck, themeDump)
+		},
 	}
+	// The command set is not settled yet; nothing is to be completed against
+	// it before it is.
+	root.CompletionOptions.DisableDefaultCmd = true
 
-	expanded := config.ExpandTilde(*cfgPath)
-	cfgPath = &expanded
+	pf := root.PersistentFlags()
+	pf.StringVar(&o.cfgPath, "config", defaultConfigPath(appName), "path to config file")
+	pf.BoolVarP(&o.verbose, "debug", "e", false, "debug logging")
+	pf.BoolVar(&o.trace, "trace", false, "log sensitive metadata (peer IDs, message lengths) — never use in shared environments")
 
-	if err := ensureConfig(*cfgPath); err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
-		os.Exit(1)
+	f := root.Flags()
+	// A flag of its own rather than cobra's: cobra's prints more than the
+	// version, and a version template of one's own is executed by
+	// text/template, which keeps every method of every type the binary links
+	// (#208).
+	f.BoolVar(&printVersion, "version", false, "print version and exit")
+	f.Var(&themeCheck, "theme-check", "print which theme each slot resolved to and where its tokens came from, then exit; give a theme name to inspect one")
+	f.Lookup("theme-check").NoOptDefVal = bareArg
+	f.Var(&themeDump, "theme-dump", "print a slot's theme (dark or light) as a complete theme file, then exit; give a theme name to dump one")
+	f.Lookup("theme-dump").NoOptDefVal = bareArg
+
+	root.AddCommand(newDaemonCmd(&o))
+	return root
+}
+
+// setup is what every command that runs tele settles first: the config file,
+// the store over it, and where the log lives.
+type setup struct {
+	cfgPath string
+	store   *config.Store
+	// logDir is the platform state home, where the log goes whichever state
+	// directory the account was pinned to.
+	logDir string
+}
+
+// newSetup reads the config file at cfgPath, writing a default one first when
+// there is none.
+func newSetup(cfgPath string) (setup, error) {
+	cfgPath = config.ExpandTilde(cfgPath)
+	if err := ensureConfig(cfgPath); err != nil {
+		return setup{}, fmt.Errorf("config: %w", err)
 	}
-
-	defaultState, err := stateDirPath(appName)
+	logDir, err := stateDirPath(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "state dir: %v\n", err)
-		os.Exit(1)
+		return setup{}, fmt.Errorf("state dir: %w", err)
 	}
-
 	// The store rather than a bare config: it holds the file's path, which is
 	// what a reload needs and what the settings overlay writes to.
-	cfgStore, err := config.NewStore(*cfgPath, defaultState)
+	store, err := config.NewStore(cfgPath, logDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
-		os.Exit(1)
+		return setup{}, fmt.Errorf("config: %w", err)
 	}
-	cfg := cfgStore.Current()
+	return setup{cfgPath: cfgPath, store: store, logDir: logDir}, nil
+}
 
-	// Themes are resolved here, before the TUI exists, so a bad theme file is
-	// reported like a config warning rather than something the interface has to
-	// cope with. The TUI is handed the result and never sees the config.
-	themesDir := cfg.ThemesDir
-	themes := theme.LoadSlots(themesDir, cfg.UI.ThemeSlots.Dark, cfg.UI.ThemeSlots.Light)
-	theme.SetSlots(themes.Slots())
-	// What is printed and logged at startup: the config's warnings and the
-	// themes'. Gathered here rather than written into the config, which is what
-	// the file says and is replaced by a reload (#239).
-	warnings := slices.Clone(cfg.Warnings)
-	for _, w := range themes.Warnings {
-		warnings = append(warnings, config.Warning{Text: "theme: " + w})
-	}
-
-	if themeCheck.set {
-		fmt.Print(themeReport(themesDir, themes, themeCheck.value, warnings))
-		os.Exit(0)
-	}
-	if themeDump.set {
-		out, err := themeDumpText(themesDir, themes, themeDump.value)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "theme: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Print(out)
-		os.Exit(0)
-	}
-
-	// The key is settled once, beside the config rather than in it: the config is
-	// what the file says, and a reload would lose a key written into it (#239).
+// appKey settles the app key once, beside the config rather than in it: the
+// config is what the file says, and a reload would lose a key written into it
+// (#239).
+func (s setup) appKey() (appkey.Key, error) {
+	cfg := s.store.Current()
 	injectedID, _ := strconv.Atoi(buildAPIID)
 	key, source, err := appkey.Resolve(
 		appkey.Key{ID: cfg.Telegram.APIID, Hash: cfg.Telegram.APIHash},
@@ -100,60 +121,21 @@ func main() {
 	)
 	switch {
 	case errors.Is(err, appkey.ErrHalfKey):
-		fmt.Fprintf(os.Stderr, "config: set both telegram.api_id and telegram.api_hash in %s, or neither\n", *cfgPath)
-		os.Exit(1)
+		return appkey.Key{}, fmt.Errorf("config: set both telegram.api_id and telegram.api_hash in %s, or neither", s.cfgPath)
 	case err != nil:
-		fmt.Fprintf(os.Stderr, "config: set telegram.api_id and telegram.api_hash in %s\nGet credentials at https://my.telegram.org\n", *cfgPath)
-		os.Exit(1)
+		return appkey.Key{}, fmt.Errorf("config: set telegram.api_id and telegram.api_hash in %s\nGet credentials at https://my.telegram.org", s.cfgPath)
 	}
-	cfgStore.SetKeySource(source)
+	s.store.SetKeySource(source)
+	return key, nil
+}
 
-	// The log lives in the platform state home regardless of where the account
-	// state was pinned: it is per-machine diagnostic output, not account data.
-	if err := os.MkdirAll(defaultState, 0700); err != nil {
-		fmt.Fprintf(os.Stderr, "state dir: %v\n", err)
-		os.Exit(1)
+// makeLogDir makes the directory the log goes in. It is per-machine
+// diagnostic output, not account data.
+func (s setup) makeLogDir() error {
+	if err := os.MkdirAll(s.logDir, 0700); err != nil {
+		return fmt.Errorf("state dir: %w", err)
 	}
-	// Every start begins by reaching the host of the state directory: a tele
-	// already holding it is attached to, and with nobody there this one
-	// becomes the host, and then reaches itself the same way (#208).
-	reached, err := hosting.Reach(context.Background(), appName, cfg.StateDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, reachFailure(err, cfg.StateDir))
-		os.Exit(1)
-	}
-	isHost := reached.Listener != nil
-	log, logPath, closeLog := openLog(defaultState, isHost, *verbose)
-
-	// The log keeps every warning on every run, including the ones the TUI shows
-	// only once: suppressing a toast must not lose the record.
-	for _, w := range warnings {
-		log.Warn("config: " + w.Text)
-		fmt.Fprintf(os.Stderr, "config: %s\n", w.Text)
-	}
-
-	r := run{
-		cfgStore:      cfgStore,
-		cfgPath:       *cfgPath,
-		key:           key,
-		log:           log,
-		logPath:       logPath,
-		verbose:       *verbose,
-		trace:         *trace,
-		themeWarnings: themes.Warnings,
-		reached:       reached,
-	}
-	if isHost {
-		err = r.host()
-	} else {
-		err = r.client()
-	}
-	_ = log.Sync()
-	_ = closeLog()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return nil
 }
 
 const defaultConfigHead = `telegram:

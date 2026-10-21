@@ -370,7 +370,7 @@ More, including which Homebrew formula carries which key:
 | Flag              | Description                                                                                    |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
 | `--config <path>` | Path to config file (default `~/.config/tele/config.yml`)                                      |
-| `-e`              | Enable debug logging                                                                           |
+| `-e`, `--debug`   | Enable debug logging                                                                           |
 | `--trace`         | Log sensitive metadata (peer IDs, message lengths). Never use on shared or synced file systems |
 | `--version`       | Print version and exit                                                                         |
 | `--theme-check`   | Print which theme each slot resolved to and where its tokens came from, then exit              |

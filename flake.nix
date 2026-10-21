@@ -76,7 +76,7 @@
 
           shellHook = ''
             echo "tele dev shell — go $(go version | cut -d' ' -f3)"
-            echo "  go run ./cmd/tele/ -config .config/tele/config.yml   # run (dev config)"
+            echo "  go run ./cmd/tele/ --config .config/tele/config.yml   # run (dev config)"
             echo "  go test ./...                                        # test"
             echo "  golangci-lint run ./...                              # lint"
           '';

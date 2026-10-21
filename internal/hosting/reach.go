@@ -65,12 +65,54 @@ func Reach(ctx context.Context, app, stateDir string) (Reached, error) {
 		return Reached{}, err
 	}
 
-	lock, err := statedir.Acquire(stateDir)
+	r, err := take(ep, stateDir)
 	if errors.Is(err, statedir.ErrLocked) {
 		// Someone holds the state directory: a host still starting, or one that
 		// will never serve. The first is waited for.
 		return waitFor(ctx, ep, err)
 	}
+	return r, err
+}
+
+// Await becomes the host of stateDir for the build named app, waiting for as
+// long as anyone else holds it, until ctx ends. It never attaches: a service
+// started while a tele in a terminal hosts takes over once that tele quits,
+// and a service manager restarting one that gave up would only loop (#208).
+// held is told who holds the state directory, once, when Await starts to wait.
+func Await(ctx context.Context, app, stateDir string, held func(holder error)) (Reached, error) {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return Reached{}, fmt.Errorf("create state dir: %w", err)
+	}
+	ep, err := ipc.EndpointFor(app, stateDir)
+	if err != nil {
+		return Reached{}, err
+	}
+	told := false
+	for {
+		r, err := take(ep, stateDir)
+		if !errors.Is(err, statedir.ErrLocked) {
+			return r, err
+		}
+		if !told {
+			held(err)
+			told = true
+		}
+		select {
+		case <-ctx.Done():
+			return Reached{}, ctx.Err()
+		case <-time.After(awaitPause):
+		}
+	}
+}
+
+// awaitPause is how often Await looks whether the state directory is free.
+var awaitPause = time.Second
+
+// take makes this process the host of ep: it takes the lock on stateDir,
+// removes a socket a dead host left, and serves ep. An error wrapping
+// statedir.ErrLocked says somebody else holds it.
+func take(ep ipc.Endpoint, stateDir string) (Reached, error) {
+	lock, err := statedir.Acquire(stateDir)
 	if err != nil {
 		return Reached{}, err
 	}

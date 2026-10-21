@@ -92,6 +92,19 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (*Atta
 	return a, nil
 }
 
+// Introduce says hello over conn and hears the host's, without attaching: what
+// someone that has no use for the host needs to name it. conn is closed.
+func Introduce(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (wire.Hello, error) {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() { _ = conn.Close() }()
+	host, _, err := greet(conn, hello)
+	if ctx.Err() != nil {
+		return host, ctx.Err()
+	}
+	return host, err
+}
+
 // helloID is the request id hello goes under: the first one.
 const helloID = 1
 

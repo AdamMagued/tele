@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -47,41 +48,88 @@ func (r run) hello() wire.Hello {
 }
 
 // host runs this process as the host, with its own TUI attached to it through
-// the endpoint like any other client (#208). It holds the state directory from
-// here to the end. Clients are served before anything else is done, so a tele
-// starting beside this one attaches rather than waits; they are seated at the
-// first owner when it is open.
+// the endpoint like any other client (#208).
 func (r run) host() error {
+	h, err := r.startHost(wire.KeptByWindow)
+	if err != nil {
+		return err
+	}
+	defer h.stop()
+
+	att, err := r.attach(r.reached.Endpoint)
+	if err != nil {
+		return err
+	}
+	cfg := r.cfgStore.Current()
+	return r.runClient(att, app.ClientConfig{
+		// This window is one of the host's clients; the rest close with it.
+		OtherWindows: func() int { return max(h.clients.Count()-1, 0) },
+		Notices:      app.StartupNotices(cfg.StateDir, h.stateMoved, cfg.SessionPinned),
+	})
+}
+
+// daemon runs this process as the host with no window of its own, kept running
+// by kept, until ctx ends (#208).
+func (r run) daemon(ctx context.Context, kept wire.Keeper) error {
+	h, err := r.startHost(kept)
+	if err != nil {
+		return err
+	}
+	defer h.stop()
+	r.log.Info("hosting with no window", zap.String("state_dir", r.cfgStore.Current().StateDir))
+	<-ctx.Done()
+	return nil
+}
+
+// hosted is this process being the host: its clients, and how it stops.
+type hosted struct {
+	clients *hosting.Clients
+	// stateMoved says the state was migrated to the state directory on the
+	// way in, which the first window says once.
+	stateMoved bool
+	stop       func()
+}
+
+// startHost makes this process the host of the endpoint it reached, kept
+// running by kept. It holds the state directory until stop. Clients are served
+// before anything else is done, so a tele starting beside this one attaches
+// rather than waits; they are seated at the first owner when it is open.
+func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 	cfg := r.cfgStore.Current()
 	clients := hosting.NewClients()
 	hello := r.hello()
-	hello.Kept = wire.KeptByWindow
+	hello.Kept = kept
+	hello.PID = os.Getpid()
 	end := app.NewHostEnd(r.cfgStore, hello)
 	srv := hosting.Serve(context.Background(), r.reached.Listener, end, clients)
+	ctx, cancel := context.WithCancel(context.Background())
+	h := &hosted{clients: clients}
+	var host *app.Host
 	// In this order: the endpoint goes, so nobody new attaches and the others
 	// hear the host is stopping; then the account stops; the lock goes last.
-	var host *app.Host
-	defer func() {
+	h.stop = func() {
+		cancel()
 		srv.Stop(stopGrace)
 		if host != nil {
 			host.Stop()
 		}
 		r.reached.Close()
-	}()
+	}
 
 	// A pinned session_file is left exactly where the user put it, so nothing
 	// is migrated in that case.
-	stateMoved := false
 	if !cfg.SessionPinned {
-		var err error
-		stateMoved, err = statedir.Migrate(cfg.StateDir, filepath.Dir(r.cfgPath), r.log)
+		moved, err := statedir.Migrate(cfg.StateDir, filepath.Dir(r.cfgPath), r.log)
 		if err != nil {
-			return fmt.Errorf("state migration: %w", err)
+			h.stop()
+			return nil, fmt.Errorf("state migration: %w", err)
 		}
+		h.stateMoved = moved
 	}
 	cleared, reason, err := accountstate.Reconcile(cfg.StateDir, cfg.Telegram.SessionFile)
 	if err != nil {
-		return fmt.Errorf("account state: %w", err)
+		h.stop()
+		return nil, fmt.Errorf("account state: %w", err)
 	}
 	if cleared {
 		r.log.Info("cleared local state before startup", zap.String("reason", string(reason)))
@@ -89,22 +137,12 @@ func (r run) host() error {
 
 	host, err = app.NewHost(r.cfgStore, r.key, r.log, r.trace, clients)
 	if err != nil {
-		return fmt.Errorf("init: %w", err)
+		h.stop()
+		return nil, fmt.Errorf("init: %w", err)
 	}
 	end.ApplyTo(host.Apply)
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
 	host.Start(ctx)
-
-	att, err := r.attach(r.reached.Endpoint)
-	if err != nil {
-		return err
-	}
-	return r.runClient(att, app.ClientConfig{
-		// This window is one of the host's clients; the rest close with it.
-		OtherWindows: func() int { return max(clients.Count()-1, 0) },
-		Notices:      app.StartupNotices(cfg.StateDir, stateMoved, cfg.SessionPinned),
-	})
+	return h, nil
 }
 
 // client runs this process as a client of a host another tele keeps, over the

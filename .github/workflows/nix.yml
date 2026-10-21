@@ -38,4 +38,4 @@ jobs:
         run: nix build .#default --print-build-logs
 
       - name: smoke test
-        run: ./result/bin/tele -version
+        run: ./result/bin/tele --version

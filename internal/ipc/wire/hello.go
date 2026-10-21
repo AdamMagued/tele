@@ -26,6 +26,9 @@ type Hello struct {
 	Warnings []Warning `json:"warnings,omitempty"`
 	// Kept says what keeps a host running, said by a host only.
 	Kept Keeper `json:"kept,omitempty"`
+	// PID is the host's process, said by a host only, so whoever finds it in
+	// the way can name it.
+	PID int `json:"pid,omitempty"`
 }
 
 // Keeper is what keeps a host running. Only a service is started again when
