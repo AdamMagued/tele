@@ -32,6 +32,7 @@ func (helloHost) Settings() wire.HostSettings              { return wire.HostSet
 func (helloHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResult{} }
 func (helloHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
 func (helloHost) Status() wire.HostStatus                  { return wire.HostStatus{} }
+func (helloHost) Restart() wire.RestartResult              { return wire.RestartResult{} }
 
 // noConn is a connection to Telegram nothing in these tests reaches.
 type noConn struct{ internaltg.Client }
@@ -61,7 +62,7 @@ func host(t *testing.T, clients *hosting.Clients) (ipc.Endpoint, *hosting.Server
 	r := reach(t, stateDir(t))
 	require.NotNil(t, r.Listener)
 	s := hosting.Serve(context.Background(), r.Listener, helloHost{}, clients)
-	t.Cleanup(func() { s.Stop(time.Second) })
+	t.Cleanup(func() { s.Stop(time.Second, core.StopQuit) })
 	return r.Endpoint, s
 }
 
@@ -137,9 +138,9 @@ func TestServe_AStoppingHostSaysSoAndGoes(t *testing.T) {
 	a := client(t, ep)
 	require.Eventually(t, func() bool { return clients.Count() == 1 }, 2*time.Second, 10*time.Millisecond)
 
-	s.Stop(time.Second)
+	s.Stop(time.Second, core.StopQuit)
 
-	assert.Equal(t, core.HostStopping{}, next(t, a))
+	assert.Equal(t, core.HostStopping{Reason: core.StopQuit}, next(t, a))
 	select {
 	case _, open := <-a.Stream():
 		assert.False(t, open, "the connection ends on it")
@@ -164,7 +165,7 @@ func TestServe_AStalledClientDoesNotHoldTheStop(t *testing.T) {
 	stopped := make(chan struct{})
 	start := time.Now()
 	go func() {
-		s.Stop(200 * time.Millisecond)
+		s.Stop(200*time.Millisecond, core.StopQuit)
 		close(stopped)
 	}()
 

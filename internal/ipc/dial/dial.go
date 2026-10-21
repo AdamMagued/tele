@@ -348,6 +348,12 @@ func askHost[T any](a *Attachment, ctx context.Context, method string, params an
 	return v, nil
 }
 
+// RestartHost asks a service to restart (#183). One that agrees stops after
+// answering, and says it is stopping to restart.
+func (a *Attachment) RestartHost(ctx context.Context) (wire.RestartResult, error) {
+	return askHost[wire.RestartResult](a, ctx, wire.MethodRestart, nil)
+}
+
 // HostSettings asks the host for its settings as it holds them (#315).
 func (a *Attachment) HostSettings(ctx context.Context) (wire.HostSettings, error) {
 	return askHost[wire.HostSettings](a, ctx, wire.MethodSettings, struct{}{})

@@ -124,8 +124,23 @@ type HostFailure struct {
 
 // HostStopping tells a client that the host is stopping: the tele process
 // that held the account is quitting, and the connection ends after this. It
-// is what tells a host that quit from one that broke (#208).
-type HostStopping struct{}
+// is what tells a host that quit from one that broke (#208), and Reason is
+// why it quits.
+type HostStopping struct {
+	Reason StopReason
+}
+
+// StopReason is why a host stops.
+type StopReason string
+
+const (
+	// StopQuit: the host was told to quit, by the person or by whatever keeps
+	// it running.
+	StopQuit StopReason = "quit"
+	// StopRestart: a newer client asked the service to restart, and its service
+	// manager starts it again on the binary installed now (#183).
+	StopRestart StopReason = "restart"
+)
 
 // Tell tells the client something from the host. Unlike the owner's events it
 // waits for the client to take it, since nothing repeats it, and gives up only

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -14,6 +15,7 @@ import (
 	"github.com/sorokin-vladimir/tele/internal/app"
 	"github.com/sorokin-vladimir/tele/internal/appkey"
 	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/ipc"
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
@@ -54,7 +56,7 @@ func (r run) host() error {
 	if err != nil {
 		return err
 	}
-	defer h.stop()
+	defer h.stop(core.StopQuit)
 
 	att, err := r.attach(r.reached.Endpoint)
 	if err != nil {
@@ -69,17 +71,29 @@ func (r run) host() error {
 }
 
 // daemon runs this process as the host with no window of its own, kept running
-// by kept, until ctx ends (#208).
+// by kept, until ctx ends or, as a service, until a newer client asks it to
+// restart (#208, #183).
 func (r run) daemon(ctx context.Context, kept wire.Keeper) error {
 	h, err := r.startHost(kept)
 	if err != nil {
 		return err
 	}
-	defer h.stop()
+	defer h.stop(core.StopQuit)
 	r.log.Info("hosting with no window", zap.String("state_dir", r.cfgStore.Current().StateDir))
-	<-ctx.Done()
-	return nil
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-h.restart:
+		r.log.Info("restarting, as a newer tele asked")
+		h.stop(core.StopRestart)
+		return &exitCode{code: restartCode, msg: "tele restarts: a newer tele asked it to"}
+	}
 }
+
+// restartCode is what a service exits with to be started again: a failure, so
+// that a service manager that restarts only a failed process restarts it too.
+// EX_TEMPFAIL, the closest of the conventional codes.
+const restartCode = 75
 
 // hosted is this process being the host: its clients, and how it stops.
 type hosted struct {
@@ -87,7 +101,11 @@ type hosted struct {
 	// stateMoved says the state was migrated to the state directory on the
 	// way in, which the first window says once.
 	stateMoved bool
-	stop       func()
+	// restart is closed when a newer client asked this host, a service, to
+	// restart.
+	restart chan struct{}
+	// stop stops the host for reason. Only the first call stops it.
+	stop func(reason core.StopReason)
 }
 
 // startHost makes this process the host of the endpoint it reached, kept
@@ -101,19 +119,26 @@ func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 	hello.Kept = kept
 	hello.PID = os.Getpid()
 	end := app.NewHostEnd(r.cfgStore, hello)
+	h := &hosted{clients: clients, restart: make(chan struct{})}
+	// Before the endpoint is served: a newer client may ask the moment it
+	// attaches, and the restart waits for the start to finish.
+	var restartOnce sync.Once
+	end.RestartWith(func() { restartOnce.Do(func() { close(h.restart) }) })
 	srv := hosting.Serve(context.Background(), r.reached.Listener, end, clients)
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &hosted{clients: clients}
 	var host *app.Host
 	// In this order: the endpoint goes, so nobody new attaches and the others
 	// hear the host is stopping; then the account stops; the lock goes last.
-	h.stop = func() {
-		cancel()
-		srv.Stop(stopGrace)
-		if host != nil {
-			host.Stop()
-		}
-		r.reached.Close()
+	var stopOnce sync.Once
+	h.stop = func(reason core.StopReason) {
+		stopOnce.Do(func() {
+			cancel()
+			srv.Stop(stopGrace, reason)
+			if host != nil {
+				host.Stop()
+			}
+			r.reached.Close()
+		})
 	}
 
 	// A pinned session_file is left exactly where the user put it, so nothing
@@ -121,14 +146,14 @@ func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 	if !cfg.SessionPinned {
 		moved, err := statedir.Migrate(cfg.StateDir, filepath.Dir(r.cfgPath), r.log)
 		if err != nil {
-			h.stop()
+			h.stop(core.StopQuit)
 			return nil, fmt.Errorf("state migration: %w", err)
 		}
 		h.stateMoved = moved
 	}
 	cleared, reason, err := accountstate.Reconcile(cfg.StateDir, cfg.Telegram.SessionFile)
 	if err != nil {
-		h.stop()
+		h.stop(core.StopQuit)
 		return nil, fmt.Errorf("account state: %w", err)
 	}
 	if cleared {
@@ -137,7 +162,7 @@ func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 
 	host, err = app.NewHost(r.cfgStore, r.key, r.log, r.trace, clients)
 	if err != nil {
-		h.stop()
+		h.stop(core.StopQuit)
 		return nil, fmt.Errorf("init: %w", err)
 	}
 	end.ApplyTo(host.Apply)

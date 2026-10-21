@@ -59,16 +59,17 @@ func (s *Server) accept() {
 	}
 }
 
-// Stop stops serving. The endpoint goes first, so nobody new connects; every
-// client still there is told the host is stopping, and its connection ends on
-// that. A client that does not take it within grace is cut off.
-func (s *Server) Stop(grace time.Duration) {
+// Stop stops serving for reason. The endpoint goes first, so nobody new
+// connects; every client still there is told the host is stopping and why, and
+// its connection ends on that. A client that does not take it within grace is
+// cut off.
+func (s *Server) Stop(grace time.Duration, reason core.StopReason) {
 	_ = s.l.Close()
 	s.mu.Lock()
 	for att := range s.served {
 		// Telling waits on the client; one that never reads must not hold up
 		// the others, nor the stop past grace.
-		go att.Tell(core.HostStopping{})
+		go att.Tell(core.HostStopping{Reason: reason})
 	}
 	s.mu.Unlock()
 

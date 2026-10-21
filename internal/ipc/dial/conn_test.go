@@ -114,11 +114,11 @@ func TestAHostThatStopsSaysSoLast(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = a.Close() })
 
-	att.Tell(core.HostStopping{})
+	att.Tell(core.HostStopping{Reason: core.StopRestart})
 
 	select {
 	case got := <-a.Stream():
-		assert.Equal(t, core.HostStopping{}, got)
+		assert.Equal(t, core.HostStopping{Reason: core.StopRestart}, got, "why the host stops crosses")
 	case <-time.After(2 * time.Second):
 		t.Fatal("the client never heard the host was stopping")
 	}

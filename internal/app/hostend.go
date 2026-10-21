@@ -35,6 +35,8 @@ type HostEnd struct {
 	since   time.Time
 	clients func() int
 	account func() *wire.AccountStatus
+	// restart stops the host to be started again, nil while nothing would.
+	restart func()
 }
 
 var _ serve.Host = (*HostEnd)(nil)
@@ -51,6 +53,31 @@ func (e *HostEnd) StatusFrom(clients func() int, account func() *wire.AccountSta
 	e.mu.Lock()
 	e.clients, e.account = clients, account
 	e.mu.Unlock()
+}
+
+// RestartWith sets what stops the host to be started again. It must not block:
+// the client asking is answered after it.
+func (e *HostEnd) RestartWith(restart func()) {
+	e.mu.Lock()
+	e.restart = restart
+	e.mu.Unlock()
+}
+
+// Restart restarts the host when it is a service, which its service manager
+// starts again on the binary installed now. Any other host is somebody's
+// session, and refuses (#183).
+func (e *HostEnd) Restart() wire.RestartResult {
+	if e.hello.Kept != wire.KeptByService {
+		return wire.RestartResult{Refused: "this tele is not a service, and only its own window or its own terminal stops it"}
+	}
+	e.mu.Lock()
+	restart := e.restart
+	e.mu.Unlock()
+	if restart == nil {
+		return wire.RestartResult{Refused: "this tele is still starting"}
+	}
+	restart()
+	return wire.RestartResult{}
 }
 
 // Status is how the host is doing. The client asking is one of the clients

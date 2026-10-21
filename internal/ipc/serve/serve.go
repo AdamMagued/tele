@@ -41,6 +41,7 @@ type Host interface {
 	SetSetting(wire.SetParams) wire.SetResult
 	Reload() wire.ReloadResult
 	Status() wire.HostStatus
+	Restart() wire.RestartResult
 }
 
 // Conn serves att over conn until the client goes, ctx ends, or one side says
@@ -273,6 +274,8 @@ func (c *served) hostCall(f wire.Frame) (answer any, ok bool, err error) {
 		return c.host.Reload(), true, nil
 	case wire.MethodStatus:
 		return c.host.Status(), true, nil
+	case wire.MethodRestart:
+		return c.host.Restart(), true, nil
 	case wire.MethodSet:
 		var p wire.SetParams
 		if err := json.Unmarshal(f.Params, &p); err != nil || p.Key == "" {

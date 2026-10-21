@@ -22,7 +22,19 @@ const (
 	// nothing, which is why it is asked of any host whose protocol is this
 	// one, whatever the two binaries' versions (#208).
 	MethodStatus = "$status"
+	// MethodRestart asks a service to restart, which its service manager does
+	// on the binary installed now. A newer client asks it, and only of a
+	// service: any other host is somebody's session (#183).
+	MethodRestart = "$restart"
 )
+
+// RestartResult is what the host said to MethodRestart. A refusal is an
+// answer, not a failure of the call.
+type RestartResult struct {
+	// Refused says why the host will not restart. Empty when it is restarting:
+	// it stops after answering.
+	Refused string `json:"refused,omitempty"`
+}
 
 // HostStatus is what the host answers MethodStatus with.
 type HostStatus struct {

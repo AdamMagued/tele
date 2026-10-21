@@ -25,6 +25,7 @@ type hostEnd struct {
 	set      wire.SetResult
 	reload   wire.ReloadResult
 	status   wire.HostStatus
+	restart  wire.RestartResult
 
 	mu   sync.Mutex
 	sets []wire.SetParams
@@ -34,6 +35,7 @@ func (h *hostEnd) Hello() wire.Hello           { return h.hello }
 func (h *hostEnd) Settings() wire.HostSettings { return h.settings }
 func (h *hostEnd) Reload() wire.ReloadResult   { return h.reload }
 func (h *hostEnd) Status() wire.HostStatus     { return h.status }
+func (h *hostEnd) Restart() wire.RestartResult { return h.restart }
 func (h *hostEnd) SetSetting(p wire.SetParams) wire.SetResult {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -124,6 +126,27 @@ func TestHost_ReloadCrosses(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, host.reload, got)
+}
+
+// A newer client asks a service to restart, and hears whether it will (#183).
+func TestHost_RestartCrosses(t *testing.T) {
+	a := connectTo(t, &hostEnd{hello: hello})
+
+	got, err := a.RestartHost(context.Background())
+
+	require.NoError(t, err)
+	assert.Empty(t, got.Refused)
+}
+
+// A host that is somebody's session refuses, and says why: that is an answer,
+// not a failure of the call.
+func TestHost_ARestartRefusedIsAnAnswer(t *testing.T) {
+	a := connectTo(t, &hostEnd{hello: hello, restart: wire.RestartResult{Refused: "kept running by its window"}})
+
+	got, err := a.RestartHost(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "kept running by its window", got.Refused)
 }
 
 // askStatusOf asks host how it is doing over a connection of its own, the way

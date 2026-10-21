@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sorokin-vladimir/tele/internal/config"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/store"
 )
@@ -33,6 +36,46 @@ func TestHostEnd_StatusBeforeTheHostHasClients(t *testing.T) {
 
 	assert.Equal(t, 0, got.Clients)
 	assert.Nil(t, got.Account)
+}
+
+// restartingEnd is the host's end over a config, kept running by kept, and
+// how many times it was asked to restart.
+func restartingEnd(t *testing.T, kept wire.Keeper) (*HostEnd, *int) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yml")
+	require.NoError(t, os.WriteFile(path, []byte("telegram:\n  api_id: 1\n  api_hash: x\n"), 0o600))
+	store, err := config.NewStore(path, t.TempDir())
+	require.NoError(t, err)
+	hello := testHello
+	hello.Kept = kept
+	e := NewHostEnd(store, hello)
+	restarts := 0
+	e.RestartWith(func() { restarts++ })
+	return e, &restarts
+}
+
+// A service restarts when a newer client asks: its service manager starts it
+// again, on the binary installed now (#183).
+func TestHostEnd_AServiceRestartsWhenAsked(t *testing.T) {
+	e, restarts := restartingEnd(t, wire.KeptByService)
+
+	got := e.Restart()
+
+	assert.Empty(t, got.Refused)
+	assert.Equal(t, 1, *restarts)
+}
+
+// Any other host is somebody's session, and nothing outside it ends it: it
+// refuses, and says what keeps it running.
+func TestHostEnd_OnlyAServiceRestarts(t *testing.T) {
+	for _, kept := range []wire.Keeper{wire.KeptByWindow, wire.KeptByDaemon} {
+		e, restarts := restartingEnd(t, kept)
+
+		got := e.Restart()
+
+		assert.NotEmpty(t, got.Refused, kept)
+		assert.Zero(t, *restarts, kept)
+	}
 }
 
 // The host tells how its account is doing in the protocol's words: where the

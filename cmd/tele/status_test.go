@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
 	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
@@ -142,7 +143,7 @@ func TestStatusCommand_AHostThatAnswersIsToldOf(t *testing.T) {
 	other := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9", PID: 4242, Kept: wire.KeptByWindow}
 	srv := hosting.Serve(context.Background(), first.Listener, heldHost{other}, hosting.NewClients())
 	t.Cleanup(func() {
-		srv.Stop(time.Second)
+		srv.Stop(time.Second, core.StopQuit)
 		first.Close()
 	})
 

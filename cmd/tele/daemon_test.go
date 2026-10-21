@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/ipc"
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
@@ -27,6 +28,7 @@ func (heldHost) Settings() wire.HostSettings              { return wire.HostSett
 func (heldHost) SetSetting(wire.SetParams) wire.SetResult { return wire.SetResult{} }
 func (heldHost) Reload() wire.ReloadResult                { return wire.ReloadResult{} }
 func (heldHost) Status() wire.HostStatus                  { return wire.HostStatus{} }
+func (heldHost) Restart() wire.RestartResult              { return wire.RestartResult{} }
 
 // `tele daemon` only ever hosts: with the state directory already hosted by
 // another tele, it stops and names that tele by its pid and version (#208).
@@ -41,7 +43,7 @@ func TestDaemon_RefusesAStateDirAnotherTeleHosts(t *testing.T) {
 	other := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9", PID: 4242, Kept: wire.KeptByWindow}
 	srv := hosting.Serve(context.Background(), first.Listener, heldHost{other}, hosting.NewClients())
 	t.Cleanup(func() {
-		srv.Stop(time.Second)
+		srv.Stop(time.Second, core.StopQuit)
 		first.Close()
 	})
 
@@ -80,7 +82,7 @@ func TestDaemonCommand_ExitsNamingTheTeleThatHosts(t *testing.T) {
 	other := wire.Hello{Protocol: wire.ProtocolVersion, Binary: "2.0.0-beta.9", PID: 4242, Kept: wire.KeptByWindow}
 	srv := hosting.Serve(context.Background(), first.Listener, heldHost{other}, hosting.NewClients())
 	t.Cleanup(func() {
-		srv.Stop(time.Second)
+		srv.Stop(time.Second, core.StopQuit)
 		first.Close()
 	})
 
@@ -139,7 +141,7 @@ func TestDaemonCommand_AServiceWaitsForTheStateDirAndHostsAsAService(t *testing.
 	// The holder is named by the pid in the lock, which is this test's.
 	waitForLine(t, lines, fmt.Sprintf("pid %d", os.Getpid()))
 
-	srv.Stop(time.Second)
+	srv.Stop(time.Second, core.StopQuit)
 	first.Close()
 	waitForLine(t, lines, "hosts")
 
@@ -153,6 +155,70 @@ func TestDaemonCommand_AServiceWaitsForTheStateDirAndHostsAsAService(t *testing.
 	}
 	if host.Kept != wire.KeptByService || host.PID != cmd.Process.Pid {
 		t.Fatalf("the service said it is kept by %q with pid %d, want %q and %d", host.Kept, host.PID, wire.KeptByService, cmd.Process.Pid)
+	}
+}
+
+// A service asked to restart says so to its clients and exits as a failure,
+// for its service manager to start it again on the binary installed now
+// (#183).
+func TestDaemonCommand_AServiceRestartsWhenAsked(t *testing.T) {
+	bin := buildTele(t)
+	stateDir, cfg := isolatedHome(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "daemon", "--service", "--config", cfg)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	lines := make(chan string, 100)
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			lines <- s.Text()
+		}
+		close(lines)
+	}()
+	waitForLine(t, lines, "hosts")
+
+	ep, err := ipc.EndpointFor("tele", stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := ipc.Dial(ctx, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := dial.Dial(ctx, conn, wire.Hello{Protocol: wire.ProtocolVersion, Binary: builtVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	got, err := a.RestartHost(ctx)
+	if err != nil || got.Refused != "" {
+		t.Fatalf("the service did not agree to restart: %v %q", err, got.Refused)
+	}
+
+	stopping := false
+	for msg := range a.Stream() {
+		if s, ok := msg.(core.HostStopping); ok {
+			stopping = s.Reason == core.StopRestart
+		}
+	}
+	if !stopping {
+		t.Error("the client did not hear the service stop to restart")
+	}
+	go func() {
+		for range lines {
+		}
+	}()
+	var exit *exec.ExitError
+	if err := cmd.Wait(); !errors.As(err, &exit) || exit.ExitCode() != restartCode {
+		t.Fatalf("the service exited with %v, want %d", err, restartCode)
 	}
 }
 

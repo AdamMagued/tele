@@ -130,7 +130,7 @@ func newTestHost(t *testing.T, first core.Connection, key appkey.Key, body strin
 	end := NewHostEnd(h.host.cfgStore, testHello)
 	end.ApplyTo(h.host.Apply)
 	srv := hosting.Serve(context.Background(), reached.Listener, end, h.host.clients)
-	t.Cleanup(func() { srv.Stop(time.Second) })
+	t.Cleanup(func() { srv.Stop(time.Second, core.StopQuit) })
 	conn, err := ipc.Dial(ctx, reached.Endpoint)
 	require.NoError(t, err)
 	h.client, err = dial.Dial(ctx, conn, testHello)
