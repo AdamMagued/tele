@@ -217,15 +217,57 @@ sent. It exits 0 when a `tele` answers and 3 when none does.
 
 `tele daemon --service` is what a service manager runs, and is not meant to be
 typed. A `tele` started this way does not exit when the state directory is
-held: it waits, and takes over when the `tele` holding it quits. Installing it
-as a service comes in a later beta.
+held: it waits, and takes over when the `tele` holding it quits.
+
+### As a service
+
+`tele daemon install` has the operating system keep `tele` running: it starts
+at every login, and again whenever it exits.
+
+- macOS: a LaunchAgent in `~/Library/LaunchAgents`. Its own output goes to
+  `service.log`, beside `tele.log`.
+- Linux: a systemd user unit in `~/.config/systemd/user`; its output is in the
+  journal. Linger is not enabled: the service lives while you are logged in,
+  which is when a desktop notification can reach you anyway.
+- Windows: a Task Scheduler task started at logon. A Windows service would run
+  where no notification can be shown.
+- Elsewhere there is nothing to install with; `install` says how to start
+  `tele daemon` from your session instead.
+
+The service runs `tele` as your `PATH` finds it, such as
+`/opt/homebrew/bin/tele`, never the versioned file behind it, so that an
+upgrade replaces what it starts. If the `tele` on your `PATH` is not the one
+you are running, `install` refuses and names both; `--path` names the command
+to run instead. With Scoop, the command on the `PATH` is a shim, so name it
+with `--path`.
+
+There is one service per config file. It carries the config it was installed
+with, and is named after it, so a beta and a stable `tele`, or two accounts,
+each have their own. Installing again replaces the service and starts it anew,
+which is how to point it at a `tele` that moved.
+
+If a `tele` holds the state directory when you install, the service waits and
+takes over when that one quits.
+
+After an upgrade the service keeps running the old version until a newer
+window joins it: the window asks it to restart, and the service manager starts
+the version installed now. Until then `tele daemon status` says the two
+differ. It also warns when the command the service runs is gone, or is another
+version than yours.
+
+`tele daemon uninstall` stops the service and removes it. Windows joined to it
+are told it was uninstalled. State and config are left as they were.
+
+### Windows that wait
 
 A window joined to a service waits for it when it goes. After about two
 seconds the status bar says it is reconnecting; the composer stays editable,
 and Enter keeps what you typed instead of sending it. Once the service is back
 the window carries on where it was. After thirty seconds it stops waiting and
-points to `tele daemon status`. A window joined to any other `tele` does not
-wait: that `tele` was someone's session, and nothing restarts it.
+points to `tele daemon status`; on Windows it waits ninety, since Task
+Scheduler starts a service again only after a minute. A window joined to any
+other `tele` does not wait: that `tele` was someone's session, and nothing
+restarts it.
 
 When a newer `tele` joins an older service, it asks the service to restart,
 and the service manager starts it again on the version installed now. A window

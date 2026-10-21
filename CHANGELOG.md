@@ -24,10 +24,19 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 - `tele daemon --service`, for a service manager to run. It waits for a state
   directory another `tele` holds instead of exiting, and takes over when that
   one quits (#208).
+- `tele daemon install` keeps `tele` running at every login as a service: a
+  LaunchAgent on macOS, a systemd user unit on Linux, a Task Scheduler task on
+  Windows. It runs `tele` as the `PATH` finds it, so an upgrade replaces what
+  it starts, and refuses a `PATH` that finds another `tele` unless `--path`
+  names one. There is one service per config file. `tele daemon uninstall`
+  stops and removes it, leaving state and config alone (#182).
+- `tele daemon status` warns when the installed service runs a command that is
+  gone, or another version than yours (#182).
 - A window joined to a service waits for it through a restart: the status bar
   says it is reconnecting, Enter keeps the text instead of sending it, and the
-  window carries on once the service is back. After thirty seconds it gives up
-  and points to `tele daemon status` (#210).
+  window carries on once the service is back. After thirty seconds, ninety on
+  Windows, it gives up and points to `tele daemon status`. A service that was
+  uninstalled is not waited for (#210, #182).
 - A newer window restarts an older service on the version installed now, and
   an older window is told `tele` was updated. A `tele` that is not a service
   is never restarted from outside (#183).
