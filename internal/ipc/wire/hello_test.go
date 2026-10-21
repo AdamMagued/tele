@@ -13,8 +13,12 @@ func hello(binary string, protocol int) wire.Hello {
 }
 
 func service(binary string, protocol int) wire.Hello {
+	return kept(binary, protocol, wire.KeptByService)
+}
+
+func kept(binary string, protocol int, by wire.Keeper) wire.Hello {
 	h := hello(binary, protocol)
-	h.Service = true
+	h.Kept = by
 	return h
 }
 
@@ -37,6 +41,11 @@ func TestDecide(t *testing.T) {
 		"newer CLI, terminal host, same protocol":       {hello("2.1.0", 1), hello("2.0.0", 1), wire.Proceed},
 		"newer CLI, terminal host, another protocol":    {hello("2.1.0", 2), hello("2.0.0", 1), wire.Refuse},
 		"older client, terminal host, another protocol": {hello("2.0.0", 1), hello("2.1.0", 2), wire.Refuse},
+		"newer client, window host":                     {hello("2.1.0", 1), kept("2.0.0", 1, wire.KeptByWindow), wire.Proceed},
+		// A daemon run by hand is someone's session too, however it looks.
+		"newer client, daemon":                   {hello("2.1.0", 1), kept("2.0.0", 1, wire.KeptByDaemon), wire.Proceed},
+		"older client, daemon":                   {hello("2.0.0", 1), kept("2.1.0", 1, wire.KeptByDaemon), wire.Proceed},
+		"newer client, daemon, another protocol": {hello("2.1.0", 2), kept("2.0.0", 1, wire.KeptByDaemon), wire.Refuse},
 
 		// A local build cannot be ordered, so only the protocol decides.
 		"local build, service":                   {hello("dev", 1), service("2.0.0", 1), wire.Proceed},

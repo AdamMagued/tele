@@ -7,7 +7,7 @@ import (
 // ProtocolVersion is the shape of what this binary says on the wire. It goes up
 // with any change the other side could misread. Two binaries with the same one
 // understand each other, whatever their own versions.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 // MethodHello is the first thing a client says, and the host's answer is its
 // own. Nothing else is said before it.
@@ -24,11 +24,26 @@ type Hello struct {
 	// Warnings is what was wrong with the host's settings when it started,
 	// said by a host only, so the first window to attach shows it.
 	Warnings []Warning `json:"warnings,omitempty"`
-	// Service is set by a host the service manager keeps running, which a
-	// newer client may ask to restart; a host a terminal keeps running is
-	// somebody's session and is never restarted from outside.
-	Service bool `json:"service,omitempty"`
+	// Kept says what keeps a host running, said by a host only.
+	Kept Keeper `json:"kept,omitempty"`
 }
+
+// Keeper is what keeps a host running. Only a service is started again when
+// it exits, which is why a newer client may ask only a service to restart: any
+// other host is somebody's session and is never restarted from outside.
+type Keeper string
+
+const (
+	// KeptByWindow: a tele with a window of its own hosts, for as long as it
+	// is open.
+	KeptByWindow Keeper = "window"
+	// KeptByDaemon: `tele daemon` run by hand hosts with no window, for as
+	// long as whoever started it lets it run.
+	KeptByDaemon Keeper = "daemon"
+	// KeptByService: the operating system's service manager keeps the host
+	// running, and starts it again whenever it exits.
+	KeptByService Keeper = "service"
+)
 
 // Verdict is what a client does about the host it reached.
 type Verdict int
@@ -57,7 +72,7 @@ const (
 // leave only the protocol to decide.
 func Decide(client, host Hello) Verdict {
 	order, ordered := compareBinaries(client.Binary, host.Binary)
-	if host.Service && ordered && order != 0 {
+	if host.Kept == KeptByService && ordered && order != 0 {
 		if order > 0 {
 			return RestartHost
 		}

@@ -54,7 +54,9 @@ func (r run) hello() wire.Hello {
 func (r run) host() error {
 	cfg := r.cfgStore.Current()
 	clients := hosting.NewClients()
-	end := app.NewHostEnd(r.cfgStore, r.hello())
+	hello := r.hello()
+	hello.Kept = wire.KeptByWindow
+	end := app.NewHostEnd(r.cfgStore, hello)
 	srv := hosting.Serve(context.Background(), r.reached.Listener, end, clients)
 	// In this order: the endpoint goes, so nobody new attaches and the others
 	// hear the host is stopping; then the account stops; the lock goes last.
