@@ -122,31 +122,61 @@ func AskStatus(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (
 	if host.Protocol != hello.Protocol {
 		return host, status, &Mismatch{Verdict: wire.Refuse, Host: host}
 	}
-	if err := wire.NewEncoder(conn).Encode(wire.Request(statusID, wire.MethodStatus, nil)); err != nil {
-		return host, status, orCtx(ctx, hostLost())
+	err = askOnce(ctx, conn, dec, wire.MethodStatus, &status)
+	return host, status, err
+}
+
+// AskRestart asks the host over conn to restart, without attaching: a client
+// newer than a service asks it, on a connection of its own (#183). A host that
+// agrees stops, and AskRestart returns once it has gone, so that whoever
+// reaches the endpoint next finds the service started again, not the one
+// stopping. conn is closed.
+func AskRestart(ctx context.Context, conn io.ReadWriteCloser, hello wire.Hello) (wire.RestartResult, error) {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() { _ = conn.Close() }()
+	var result wire.RestartResult
+	_, dec, err := greet(conn, hello)
+	if err != nil {
+		return result, orCtx(ctx, err)
 	}
-	// Whatever else the host says before its answer is meant for a client
-	// drawing the account, which this is not.
+	if err := askOnce(ctx, conn, dec, wire.MethodRestart, &result); err != nil || result.Refused != "" {
+		return result, err
+	}
 	for {
-		f, err := dec.Decode()
-		if err != nil {
-			return host, status, orCtx(ctx, hostLost())
+		if _, err := dec.Decode(); err != nil {
+			return result, orCtx(ctx, nil)
 		}
-		if f.ID != statusID {
-			continue
-		}
-		if f.Error != nil {
-			return host, status, f.Error
-		}
-		if err := json.Unmarshal(f.Result, &status); err != nil {
-			return host, status, protocol.Violation(fmt.Errorf("%w: %s: %v", wire.ErrProtocol, wire.MethodStatus, err))
-		}
-		return host, status, nil
 	}
 }
 
-// statusID is the request id AskStatus asks under, the one after hello's.
-const statusID = helloID + 1
+// askOnce asks method of the host over conn, once hello is behind it, and
+// decodes the answer into dst. Whatever else the host says before its answer
+// is meant for a client drawing the account, which the one asking is not.
+func askOnce(ctx context.Context, conn io.Writer, dec *wire.Decoder, method string, dst any) error {
+	if err := wire.NewEncoder(conn).Encode(wire.Request(askID, method, nil)); err != nil {
+		return orCtx(ctx, hostLost())
+	}
+	for {
+		f, err := dec.Decode()
+		if err != nil {
+			return orCtx(ctx, hostLost())
+		}
+		if f.ID != askID {
+			continue
+		}
+		if f.Error != nil {
+			return f.Error
+		}
+		if err := json.Unmarshal(f.Result, dst); err != nil {
+			return protocol.Violation(fmt.Errorf("%w: %s: %v", wire.ErrProtocol, method, err))
+		}
+		return nil
+	}
+}
+
+// askID is the request id askOnce asks under, the one after hello's.
+const askID = helloID + 1
 
 // orCtx is err, or why ctx ended when it has: an ended ctx closes the
 // connection, and what the read then says is only the symptom.

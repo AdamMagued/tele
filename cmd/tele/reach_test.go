@@ -40,6 +40,42 @@ func TestReachFailure_AHolderThatDoesNotServeIsNamed(t *testing.T) {
 	}
 }
 
+// A window older than the service is told tele was updated: the service
+// already runs the new version, and this window is the old one (#183).
+func TestReachFailure_AnOlderWindowIsToldTeleWasUpdated(t *testing.T) {
+	err := &dial.Mismatch{Verdict: wire.RestartClient, Host: wire.Hello{Binary: "2.0.1", Kept: wire.KeptByService}}
+
+	msg := reachFailure(err, "/s")
+
+	for _, want := range []string{"updated", "2.0.1", version.Version, "again"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("%q does not say %q", msg, want)
+		}
+	}
+}
+
+// A service that came back on its old version is named, with where to look.
+func TestReachFailure_AServiceThatCameBackOldIsNamed(t *testing.T) {
+	err := fmt.Errorf("%w: it runs 2.0.0-beta.1", hosting.ErrServiceStillOlder)
+
+	msg := reachFailure(err, "/s")
+
+	for _, want := range []string{"2.0.0-beta.1", version.Version, "tele daemon status"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("%q does not say %q", msg, want)
+		}
+	}
+}
+
+// A service that never came back after its restart points to where to look.
+func TestReachFailure_AServiceThatDidNotComeBack(t *testing.T) {
+	msg := reachFailure(hosting.ErrNoHostCameBack, "/s")
+
+	if !strings.Contains(msg, "tele daemon status") {
+		t.Errorf("%q does not say where to look", msg)
+	}
+}
+
 // Anything else is said as it is.
 func TestReachFailure_AnythingElseIsSaidAsItIs(t *testing.T) {
 	msg := reachFailure(errors.New("permission denied"), "/x")

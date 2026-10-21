@@ -87,7 +87,13 @@ func runDaemon(ctx context.Context, o options, kept wire.Keeper) error {
 	}
 	r.log, r.logPath, r.reached = log, logPath, reached
 
-	fmt.Fprintf(os.Stderr, "tele %s (pid %d) hosts %s. Ctrl+C stops it.\n", version.Version, os.Getpid(), cfg.StateDir)
+	// A service's stderr goes to its service manager's log, where nobody can
+	// press Ctrl+C.
+	if kept == wire.KeptByService {
+		fmt.Fprintf(os.Stderr, "tele %s (pid %d) hosts %s as a service.\n", version.Version, os.Getpid(), cfg.StateDir)
+	} else {
+		fmt.Fprintf(os.Stderr, "tele %s (pid %d) hosts %s. Ctrl+C stops it.\n", version.Version, os.Getpid(), cfg.StateDir)
+	}
 	return r.daemon(ctx, kept)
 }
 

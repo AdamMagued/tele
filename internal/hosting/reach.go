@@ -140,24 +140,12 @@ var waitForHost = 5 * time.Second
 // between tries, and gives up after waitForHost. locked is what taking the
 // lock said, which names the process holding it.
 func waitFor(ctx context.Context, ep ipc.Endpoint, locked error) (Reached, error) {
-	deadline := time.Now().Add(waitForHost)
-	pause := 50 * time.Millisecond
-	for {
-		conn, err := ipc.Dial(ctx, ep)
-		if err == nil {
-			return Reached{Endpoint: ep, Conn: conn}, nil
-		}
-		if !errors.Is(err, ipc.ErrNoHost) {
-			return Reached{}, err
-		}
-		if time.Now().Add(pause).After(deadline) {
-			return Reached{}, fmt.Errorf("%w (%v)", ErrHeldNotServing, locked)
-		}
-		select {
-		case <-ctx.Done():
-			return Reached{}, ctx.Err()
-		case <-time.After(pause):
-		}
-		pause = min(2*pause, 500*time.Millisecond)
+	conn, err := dialUntil(ctx, ep, waitForHost)
+	if errors.Is(err, errGaveUp) {
+		return Reached{}, fmt.Errorf("%w (%v)", ErrHeldNotServing, locked)
 	}
+	if err != nil {
+		return Reached{}, err
+	}
+	return Reached{Endpoint: ep, Conn: conn}, nil
 }

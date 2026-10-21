@@ -27,6 +27,11 @@ import (
 // helloTimeout bounds how long a client waits for its host to answer hello.
 const helloTimeout = 5 * time.Second
 
+// attachTimeout bounds how long a window waits to attach to another tele's
+// host, which takes as long as a service restarting on a newer version does
+// (#183).
+const attachTimeout = time.Minute
+
 // stopGrace is how long a stopping host gives its other clients to hear it.
 const stopGrace = 2 * time.Second
 
@@ -176,9 +181,9 @@ func (r run) startHost(kept wire.Keeper) (*hosted, error) {
 // lock, no migration, no owner. The host's settings are its own, from its own
 // file, and this client changes them only by asking it (#315).
 func (r run) client() error {
-	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), attachTimeout)
 	defer cancel()
-	att, err := dial.Dial(ctx, r.reached.Conn, r.hello())
+	att, err := hosting.Attach(ctx, r.reached, r.hello())
 	if err != nil {
 		return errors.New(reachFailure(err, r.cfgStore.Current().StateDir))
 	}
