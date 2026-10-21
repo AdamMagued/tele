@@ -1,0 +1,203 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/sorokin-vladimir/tele/internal/config"
+	"github.com/sorokin-vladimir/tele/internal/ipc"
+	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
+	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
+	"github.com/sorokin-vladimir/tele/internal/service"
+	"github.com/sorokin-vladimir/tele/internal/version"
+)
+
+// installer installs and uninstalls the service of a config with the system's
+// service manager (#182).
+type installer struct {
+	manager func() (service.Manager, error)
+	// executable is the running binary, which is what installs the service.
+	executable func() (string, error)
+	out        io.Writer
+}
+
+// newInstallCmds are `tele daemon install` and `tele daemon uninstall`.
+func newInstallCmds(o *options) []*cobra.Command {
+	in := func(cmd *cobra.Command) installer {
+		return installer{
+			manager: func() (service.Manager, error) {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return nil, err
+				}
+				return service.ForThisSystem(home)
+			},
+			executable: os.Executable,
+			out:        cmd.OutOrStdout(),
+		}
+	}
+	var path string
+	install := &cobra.Command{
+		Use:   "install",
+		Short: "Keep the account held at every login, with no window, as a service",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return in(cmd).install(cmd.Context(), *o, path)
+		},
+	}
+	install.Flags().StringVar(&path, "path", "", "the command the service runs, in place of tele as the PATH finds it")
+	uninstall := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Stop the service and remove it; state and config are left alone",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return in(cmd).uninstall(cmd.Context(), *o)
+		},
+	}
+	return []*cobra.Command{install, uninstall}
+}
+
+// unitOf is the service of the config read by s, running entry.
+func unitOf(s setup, entry string) (service.Unit, error) {
+	cfgPath, err := filepath.Abs(s.cfgPath)
+	if err != nil {
+		return service.Unit{}, err
+	}
+	defaultConfig := cfgPath == config.ExpandTilde(defaultConfigPath(appName))
+	return service.Unit{
+		Name:    service.Name(appName, s.store.Current().StateDir, defaultConfig),
+		Binary:  entry,
+		Config:  cfgPath,
+		LogPath: filepath.Join(s.logDir, "service.log"),
+	}, nil
+}
+
+// install installs the service of o's config, running given or tele as the
+// PATH finds it, and starts it.
+func (in installer) install(ctx context.Context, o options, given string) error {
+	s, err := newSetup(o.cfgPath)
+	if err != nil {
+		return err
+	}
+	// A service that cannot start is no service: it would only be started
+	// again and again.
+	if _, err := s.appKey(); err != nil {
+		return err
+	}
+	cfg := s.store.Current()
+	m, err := in.manager()
+	if errors.Is(err, service.ErrUnsupported) {
+		cfgPath, _ := filepath.Abs(s.cfgPath)
+		return fmt.Errorf("%w; run `%s daemon --config %s` from your session's startup instead", err, appName, cfgPath)
+	}
+	if err != nil {
+		return err
+	}
+	running, err := in.executable()
+	if err != nil {
+		return err
+	}
+	entry, err := service.EntryPoint(appName, running, given)
+	if err != nil {
+		return err
+	}
+	u, err := unitOf(s, entry)
+	if err != nil {
+		return err
+	}
+	holder, held := whoHolds(ctx, cfg.StateDir)
+	if err := m.Install(u); err != nil {
+		return fmt.Errorf("installing the service: %w", err)
+	}
+	_, _ = fmt.Fprintf(in.out, "Installed the service %s: it runs %s at every login, and now.\n", u.Name, entry)
+	if held && holder.Kept != wire.KeptByService {
+		_, _ = fmt.Fprintf(in.out, "tele %s (pid %d) holds %s now; the service takes over when it quits.\n",
+			holder.Binary, holder.PID, cfg.StateDir)
+	}
+	return nil
+}
+
+// uninstall tells the service of o's config it is being uninstalled, so it
+// stops for good, and removes its unit. State and config are left alone.
+func (in installer) uninstall(ctx context.Context, o options) error {
+	s, err := newSetup(o.cfgPath)
+	if err != nil {
+		return err
+	}
+	cfg := s.store.Current()
+	m, err := in.manager()
+	if errors.Is(err, service.ErrUnsupported) {
+		_, _ = fmt.Fprintln(in.out, "No tele service is installed: this system has none to install.")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	u, err := unitOf(s, "")
+	if err != nil {
+		return err
+	}
+	tellUninstalled(ctx, cfg.StateDir)
+	removed, err := m.Uninstall(u.Name)
+	if err != nil {
+		return fmt.Errorf("uninstalling the service: %w", err)
+	}
+	if !removed {
+		_, _ = fmt.Fprintf(in.out, "No tele service is installed for %s.\n", u.Config)
+		return nil
+	}
+	_, _ = fmt.Fprintf(in.out, "Uninstalled the service %s. State and config are left as they were.\n", u.Name)
+	return nil
+}
+
+// whoHolds is what the tele holding stateDir says of itself, if one answers.
+func whoHolds(ctx context.Context, stateDir string) (wire.Hello, bool) {
+	ctx, cancel := context.WithTimeout(ctx, helloTimeout)
+	defer cancel()
+	conn, ok := reachHolder(ctx, stateDir)
+	if !ok {
+		return wire.Hello{}, false
+	}
+	host, err := dial.Introduce(ctx, conn, ownHello())
+	return host, err == nil
+}
+
+// tellUninstalled tells the service holding stateDir, if one does, that it is
+// being uninstalled. Anything else holding it refuses, which changes nothing.
+func tellUninstalled(ctx context.Context, stateDir string) {
+	ctx, cancel := context.WithTimeout(ctx, helloTimeout)
+	defer cancel()
+	conn, ok := reachHolder(ctx, stateDir)
+	if !ok {
+		return
+	}
+	_, _ = dial.AskUninstall(ctx, conn, ownHello())
+}
+
+// reachHolder connects to the tele holding stateDir, if one answers. It never
+// becomes one.
+func reachHolder(ctx context.Context, stateDir string) (io.ReadWriteCloser, bool) {
+	if _, err := os.Stat(stateDir); err != nil {
+		return nil, false
+	}
+	ep, err := ipc.EndpointFor(appName, stateDir)
+	if err != nil {
+		return nil, false
+	}
+	conn, err := ipc.Dial(ctx, ep)
+	if err != nil {
+		return nil, false
+	}
+	return conn, true
+}
+
+// ownHello is what a command that only asks the host says of itself.
+func ownHello() wire.Hello {
+	return wire.Hello{Protocol: wire.ProtocolVersion, Binary: version.Version}
+}

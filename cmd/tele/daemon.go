@@ -38,6 +38,7 @@ func newDaemonCmd(o *options) *cobra.Command {
 	// environment (#208).
 	cmd.Flags().BoolVar(&service, "service", false, "run as the service the service manager keeps running")
 	cmd.AddCommand(newStatusCmd(o))
+	cmd.AddCommand(newInstallCmds(o)...)
 	return cmd
 }
 
