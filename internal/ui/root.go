@@ -106,6 +106,12 @@ type RootModel struct {
 	// clockSkew is how far the local clock is from Telegram's, zero when it is
 	// close enough to be accepted (#277).
 	clockSkew time.Duration
+	// hostAway is set while the host is away, and absences counts how many
+	// times it has been: the timer that names an absence carries its number,
+	// so one that fires after the host is back, or gone again, names nothing
+	// (#210).
+	hostAway bool
+	absences int
 	// accountSub is the account subscription, and account what it last said:
 	// the login screen, the connection's end and the clock are drawn from it
 	// (#309).
@@ -637,6 +643,17 @@ func (m RootModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoginAnswer(msg)
 	case HostLostMsg:
 		return m.handleHostLost(msg)
+	case HostAwayMsg:
+		return m.handleHostAway()
+	case HostBackMsg:
+		return m.handleHostBack(), nil
+	case hostAwayTickMsg:
+		return m.handleHostAwayTick(msg), nil
+	case screens.NotSentWhileAwayMsg:
+		return m.handleStatusErr(StatusErrMsg{
+			Text: "Not sent: tele is reconnecting to the tele that holds this account. The text is kept.",
+			Sev:  components.SeverityWarning,
+		})
 	case clipboardImagePastedMsg:
 		return m.handleClipboardImagePasted(msg)
 	case components.ComposerLimitMsg:

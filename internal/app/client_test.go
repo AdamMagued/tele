@@ -12,24 +12,33 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/core"
 	"github.com/sorokin-vladimir/tele/internal/ipc/dial"
+	"github.com/sorokin-vladimir/tele/internal/ipc/wire"
 	"github.com/sorokin-vladimir/tele/internal/ui"
 )
 
-// streamOnly is an attachment the test feeds by hand.
+// streamOnly is an attachment the test feeds by hand, which ended for lost.
 type streamOnly struct {
 	Attachment
 	stream chan any
+	lost   error
 }
 
 func (s streamOnly) Stream() <-chan any { return s.stream }
+func (s streamOnly) Lost() error        { return s.lost }
 
 // bridged runs a client's bridge over a stream the test feeds, and hands
 // back what reached the model.
 func bridged(t *testing.T, feed func(chan any)) []any {
 	t.Helper()
+	return bridgedLost(t, nil, feed)
+}
+
+// bridgedLost is bridged over an attachment that ended for lost.
+func bridgedLost(t *testing.T, lost error, feed func(chan any)) []any {
+	t.Helper()
 	stream := make(chan any, 4)
 	got := make(chan any, 8)
-	c := &Client{c: ClientConfig{Log: zap.NewNop(), Attachment: streamOnly{stream: stream}}}
+	c := &Client{c: ClientConfig{Log: zap.NewNop(), Attachment: streamOnly{stream: stream, lost: lost}}}
 	c.send = func(msg tea.Msg) { got <- msg }
 	done := make(chan struct{})
 	go func() {
@@ -74,5 +83,21 @@ func TestClient_AServiceThatCameBackHasNotQuit(t *testing.T) {
 		close(s)
 	})
 
-	assert.Equal(t, []any{dial.Reconnecting{}, dial.Reconnected{}, ui.HostLostMsg{Quit: false}}, got)
+	assert.Equal(t, []any{ui.HostAwayMsg{}, ui.HostBackMsg{}, ui.HostLostMsg{Quit: false}}, got)
+}
+
+// A service given up on, or one that came back newer than this window, is
+// told as such, for the window to say so (#210, #183).
+func TestClient_WhyTheServiceWasLostIsTold(t *testing.T) {
+	gaveUp := bridgedLost(t, dial.ErrGaveUp, func(s chan any) {
+		s <- dial.Reconnecting{}
+		close(s)
+	})
+	updated := bridgedLost(t, &dial.Mismatch{Verdict: wire.RestartClient, Host: wire.Hello{Binary: "2.1.0"}}, func(s chan any) {
+		s <- dial.Reconnecting{}
+		close(s)
+	})
+
+	assert.Equal(t, []any{ui.HostAwayMsg{}, ui.HostLostMsg{GaveUp: true}}, gaveUp)
+	assert.Equal(t, []any{ui.HostAwayMsg{}, ui.HostLostMsg{UpdatedTo: "2.1.0"}}, updated)
 }

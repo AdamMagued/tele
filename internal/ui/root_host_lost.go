@@ -4,9 +4,14 @@ import tea "charm.land/bubbletea/v2"
 
 // HostLostMsg says the client's link to its host is gone. Quit is set when the
 // host said it was stopping first - the tele that held the account quit -
-// and clear when the connection simply broke (#208).
+// and clear when the connection simply broke (#208). For a service the window
+// waited for, GaveUp says it did not come back in time, and UpdatedTo names the
+// newer version it came back on, which turns this older window away (#210,
+// #183).
 type HostLostMsg struct {
-	Quit bool
+	Quit      bool
+	GaveUp    bool
+	UpdatedTo string
 }
 
 // handleHostLost leaves the window with nothing to show but why: a window
@@ -16,9 +21,16 @@ func (m RootModel) handleHostLost(msg HostLostMsg) (RootModel, tea.Cmd) {
 	if m.screen == ScreenMain {
 		m.unsent = m.chat.ComposerValue()
 	}
-	cause := "The connection to the tele that held this account broke."
-	if msg.Quit {
+	var cause string
+	switch {
+	case msg.UpdatedTo != "":
+		cause = "tele was updated: the service holding this account now runs " + msg.UpdatedTo + "."
+	case msg.GaveUp:
+		cause = "The tele service holding this account went and did not come back.\n`tele daemon status` says whether it runs."
+	case msg.Quit:
 		cause = "The tele that held this account has quit."
+	default:
+		cause = "The connection to the tele that held this account broke."
 	}
 	cause += "\nStart tele again to carry on."
 	m.screen = ScreenLogin

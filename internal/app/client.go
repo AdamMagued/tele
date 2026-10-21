@@ -39,6 +39,8 @@ type Attachment interface {
 	Host() wire.Hello
 	HostCalls
 	ReloadHost(ctx context.Context) (wire.ReloadResult, error)
+	// Lost is why the attachment ended, once its stream has.
+	Lost() error
 }
 
 // ClientConfig is what a client is made from.
@@ -268,21 +270,41 @@ func (c *Client) bridge(ctx context.Context) {
 					// fault here, not a host that went away.
 					c.c.Log.Error("the link to this process's own host broke")
 				}
-				c.send(ui.HostLostMsg{Quit: stopping})
+				c.send(hostLost(stopping, c.c.Attachment.Lost()))
 				return
 			}
-			if _, ok := msg.(core.HostStopping); ok {
+			switch msg.(type) {
+			case core.HostStopping:
 				stopping = true
 				continue
-			}
-			// A service that stopped and came back has not quit: its stopping
-			// was the restart's (#210).
-			if _, ok := msg.(dial.Reconnected); ok {
+			case dial.Reconnecting:
+				c.send(ui.HostAwayMsg{})
+				continue
+			case dial.Reconnected:
+				// A service that stopped and came back has not quit: its
+				// stopping was the restart's (#210).
 				stopping = false
+				c.send(ui.HostBackMsg{})
+				continue
 			}
 			c.hear(msg)
 			c.send(msg)
 		}
+	}
+}
+
+// hostLost is what the window is told when its link to its host is gone for
+// good: whether the host said it was stopping, and for a service the window
+// waited for, whether it gave up on it or the service came back newer.
+func hostLost(stopping bool, lost error) ui.HostLostMsg {
+	var mismatch *dial.Mismatch
+	switch {
+	case errors.Is(lost, dial.ErrGaveUp):
+		return ui.HostLostMsg{GaveUp: true}
+	case errors.As(lost, &mismatch) && mismatch.Verdict == wire.RestartClient:
+		return ui.HostLostMsg{UpdatedTo: mismatch.Host.Binary}
+	default:
+		return ui.HostLostMsg{Quit: stopping}
 	}
 }
 

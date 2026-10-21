@@ -34,6 +34,9 @@ type StatusBar struct {
 	// from status because status is cleared on every key press, and this lasts
 	// until the skew is over.
 	clockSkew string
+	// hostAway says the window's host is away and being waited for (#210),
+	// and lasts until it is back, as clockSkew does.
+	hostAway string
 }
 
 func NewStatusBar(width int) *StatusBar {
@@ -54,6 +57,9 @@ func (sb *StatusBar) SetVersion(v string)      { sb.version = v }
 
 // SetClockSkew shows s right after the mode label until it is set to "".
 func (sb *StatusBar) SetClockSkew(s string) { sb.clockSkew = s }
+
+// SetHostAway shows s right after the mode label until it is set to "".
+func (sb *StatusBar) SetHostAway(s string) { sb.hostAway = s }
 
 // StartTransfer shows a transient, animated transfer indicator with label and
 // returns the serial identifying it, so a later SetTransferProgress/ClearTransfer
@@ -111,6 +117,9 @@ func (sb *StatusBar) View() string {
 	// First after the mode, because it explains why nothing else on screen is
 	// moving. In the bar's own colours: the theme's warning colour is chosen
 	// against the canvas, and the bar is a surface of its own.
+	if sb.hostAway != "" {
+		segs = append(segs, theme.S().Bar.Render(sb.hostAway))
+	}
 	if sb.clockSkew != "" {
 		segs = append(segs, theme.S().Bar.Render(sb.clockSkew))
 	}

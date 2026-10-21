@@ -69,11 +69,13 @@ type ChatModel struct {
 	editMsgID       int
 	spinner         components.Spinner
 	loading         bool
-	loadErr         string
-	logo            components.LogoLoader
-	typingBase      string
-	typingDots      components.TypingDots
-	lastTypingAt    time.Time
+	// hostAway is set while the host is away: Enter then sends nothing.
+	hostAway     bool
+	loadErr      string
+	logo         components.LogoLoader
+	typingBase   string
+	typingDots   components.TypingDots
+	lastTypingAt time.Time
 	// drafts holds the unsent composer text for chats that are not currently
 	// open, keyed by history. The open chat's draft lives in the composer
 	// itself; it is flushed here on switch-away and restored on switch-to (#62).
@@ -107,6 +109,14 @@ func NewChatModel(width, height int) *ChatModel {
 
 // SetLoading shows or hides the loading spinner in the chat pane.
 func (m *ChatModel) SetLoading(v bool) { m.loading = v }
+
+// SetHostAway says whether the host is away, waited for after it went. While
+// it is, Enter sends nothing and keeps the composer as it is (#210).
+func (m *ChatModel) SetHostAway(v bool) { m.hostAway = v }
+
+// NotSentWhileAwayMsg says Enter was pressed while the host was away: nothing
+// was sent, and what was typed is still in the composer.
+type NotSentWhileAwayMsg struct{}
 
 // IsLoading reports whether the chat pane is currently showing its loading
 // spinner (drives the spinner tick loop, issue #147).
@@ -649,6 +659,11 @@ func (m *ChatModel) Update(msg tea.Msg) (layout.Pane, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if m.composerFocused {
+			// With the host away nothing reaches it: what was typed stays, to
+			// be sent once the host is back (#210).
+			if msg.Code == tea.KeyEnter && msg.Mod == 0 && m.hostAway {
+				return m, func() tea.Msg { return NotSentWhileAwayMsg{} }
+			}
 			// An over-limit draft would be rejected by Telegram (4096 for a
 			// message, 1024 for a caption). Refuse locally and keep the draft so
 			// the user can trim it (#126).
