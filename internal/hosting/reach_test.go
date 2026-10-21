@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/sorokin-vladimir/tele/internal/hosting"
 	"github.com/sorokin-vladimir/tele/internal/ipc"
+	"github.com/sorokin-vladimir/tele/internal/ipc/ipctest"
 	"github.com/sorokin-vladimir/tele/internal/statedir"
 )
 
@@ -26,9 +26,7 @@ func stateDir(t *testing.T) string {
 	dir := t.TempDir()
 	ep, err := ipc.EndpointFor(app, dir)
 	require.NoError(t, err)
-	if filepath.Dir(ep.Path) != dir {
-		t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(ep.Path)) })
-	}
+	ipctest.ForgetEndpoint(t, app, dir, ep.Path)
 	return dir
 }
 

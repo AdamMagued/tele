@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sorokin-vladimir/tele/internal/ipc"
+	"github.com/sorokin-vladimir/tele/internal/ipc/ipctest"
 )
 
 // endpoint is the real endpoint of a fresh state directory, on whatever
@@ -22,9 +23,10 @@ import (
 // works there at all.
 func endpoint(t *testing.T) ipc.Endpoint {
 	t.Helper()
-	ep, err := ipc.EndpointFor("tele-test", t.TempDir())
+	dir := t.TempDir()
+	ep, err := ipc.EndpointFor("tele-test", dir)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(ep.Path)) })
+	ipctest.ForgetEndpoint(t, "tele-test", dir, ep.Path)
 	return ep
 }
 
@@ -89,11 +91,14 @@ func TestSocket_NobodyThereIsNoHost(t *testing.T) {
 // network rather than as a missing file, and a client must not take that for
 // a host that refused it.
 func TestSocket_NobodyThereBeforeTheSocketsDirectoryExists(t *testing.T) {
+	// Without a runtime directory, so that the socket goes to a directory of
+	// this state directory's own rather than to the one every build shares.
+	t.Setenv("XDG_RUNTIME_DIR", "")
 	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 120))
 	require.NoError(t, os.MkdirAll(deep, 0o700))
 	ep, err := ipc.EndpointFor("tele-test", deep)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(ep.Path)) })
+	ipctest.ForgetEndpoint(t, "tele-test", deep, ep.Path)
 	_, err = os.Stat(filepath.Dir(ep.Path))
 	require.ErrorIs(t, err, os.ErrNotExist, "the socket's own directory is not made yet")
 
