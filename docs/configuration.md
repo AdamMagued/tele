@@ -202,6 +202,40 @@ waits a few seconds, then says which process holds the directory and exits. The
 same happens when the two speak different versions of their protocol. Quit the
 running one and start again.
 
+## Running without a window
+
+`tele daemon` holds the state directory with no window of its own: it keeps
+the connection, delivers desktop notifications, and lets windows join it, until
+you stop it with Ctrl+C. It only ever holds the directory. If another `tele`
+already does, it names that one by its version and process id and exits.
+
+`tele daemon status` asks whichever `tele` holds the state directory how it is
+doing: its version against yours, what keeps it running, how long it has run,
+how many windows are joined, where the account stands, whether its link to
+Telegram is up, when the last update arrived, and how many messages wait to be
+sent. It exits 0 when a `tele` answers and 3 when none does.
+
+`tele daemon --service` is what a service manager runs, and is not meant to be
+typed. A `tele` started this way does not exit when the state directory is
+held: it waits, and takes over when the `tele` holding it quits. Installing it
+as a service comes in a later beta.
+
+A window joined to a service waits for it when it goes. After about two
+seconds the status bar says it is reconnecting; the composer stays editable,
+and Enter keeps what you typed instead of sending it. Once the service is back
+the window carries on where it was. After thirty seconds it stops waiting and
+points to `tele daemon status`. A window joined to any other `tele` does not
+wait: that `tele` was someone's session, and nothing restarts it.
+
+When a newer `tele` joins an older service, it asks the service to restart,
+and the service manager starts it again on the version installed now. A window
+older than the service is told `tele` was updated, and closes; start it again.
+A `tele` that is not a service is never restarted from outside.
+
+If the account is logged out, or banned, while no window is open, the desktop
+is told once, whatever `ui.notifications.desktop` says: it is the only way to
+learn that messages stopped arriving.
+
 The older `telegram.session_file` key still works and keeps the session where it
 points, but it is deprecated and will be removed in the next release. If you have
 not set it, your existing session and database are moved into the state directory

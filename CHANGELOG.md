@@ -11,7 +11,34 @@ Older releases are at <https://github.com/sorokin-vladimir/tele/releases>.
 
 ## [Unreleased]
 
+### Added
+
+- `tele daemon` holds the account with no window: it keeps the connection and
+  delivers desktop notifications, and windows join it as they would join any
+  other `tele`. It never joins another one; one already holding the account is
+  named by its version and process id (#208).
+- `tele daemon status` says how the `tele` holding the account is doing, a
+  window's included: versions, what keeps it running, uptime, joined windows,
+  the account, the link to Telegram, the last update and the messages waiting
+  to be sent. It exits 3 when nothing answers (#208).
+- `tele daemon --service`, for a service manager to run. It waits for a state
+  directory another `tele` holds instead of exiting, and takes over when that
+  one quits (#208).
+- A window joined to a service waits for it through a restart: the status bar
+  says it is reconnecting, Enter keeps the text instead of sending it, and the
+  window carries on once the service is back. After thirty seconds it gives up
+  and points to `tele daemon status` (#210).
+- A newer window restarts an older service on the version installed now, and
+  an older window is told `tele` was updated. A `tele` that is not a service
+  is never restarted from outside (#183).
+- A log out, or a banned account, with no window open is told to the desktop
+  once, whatever `ui.notifications.desktop` says (#211).
+
 ### Changed
+
+- **Breaking:** flags take two dashes. `-version`, `-config`, `-theme-dump`
+  and `-theme-check` no longer work; use `--version`, `--config` and so on.
+  `-e` stays, and is also `--debug` (#208).
 
 - The first step towards tele 2.0, where one process holds the Telegram
   connection and the terminal interface and the command line attach to it.

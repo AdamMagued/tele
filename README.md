@@ -376,6 +376,13 @@ More, including which Homebrew formula carries which key:
 | `--theme-check`   | Print which theme each slot resolved to and where its tokens came from, then exit              |
 | `--theme-dump`    | Print a slot's theme as a complete theme file, then exit (`--theme-dump=light`)                |
 
+| Command              | Description                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------- |
+| `tele daemon`        | Hold the account with no window, keeping the connection and notifications; windows join it         |
+| `tele daemon status` | Say how the `tele` holding the account is doing; exits 3 when none is running                       |
+
+See [docs/configuration.md](docs/configuration.md#running-without-a-window).
+
 ---
 
 ## Keybindings
