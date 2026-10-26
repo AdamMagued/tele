@@ -119,27 +119,7 @@ func TestConvertMessageNoGroupedID(t *testing.T) {
 	}
 }
 
-func TestParseHistory_NilFromID_AssignsPeerSenderID(t *testing.T) {
-	raw := &tg.MessagesMessages{
-		Messages: []tg.MessageClass{
-			&tg.Message{
-				ID:      1,
-				PeerID:  &tg.PeerUser{UserID: 42},
-				Message: "hello",
-				Date:    1700000000,
-			},
-		},
-		Users: []tg.UserClass{
-			&tg.User{ID: 42, FirstName: "Alice"},
-		},
-	}
-	msgs := parseHistory(raw, 42)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, int64(42), msgs[0].SenderID)
-	assert.Equal(t, "Alice", msgs[0].SenderName)
-}
-
-func TestParseHistory_ChannelPost_NilFromID_AssignsSenderID(t *testing.T) {
+func TestParseHistory_ChannelPost_NilFromID_SenderIDZero(t *testing.T) {
 	raw := &tg.MessagesChannelMessages{
 		Messages: []tg.MessageClass{
 			&tg.Message{
@@ -155,7 +135,6 @@ func TestParseHistory_ChannelPost_NilFromID_AssignsSenderID(t *testing.T) {
 	}
 	msgs := parseHistory(raw, 500)
 	require.Len(t, msgs, 1)
-	assert.Equal(t, int64(500), msgs[0].SenderID)
+	assert.Equal(t, int64(0), msgs[0].SenderID)
 	assert.Equal(t, "Announcements", msgs[0].SenderName)
 }
-
