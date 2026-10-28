@@ -128,6 +128,9 @@ func TestNormalizeReactionEmoji(t *testing.T) {
 		{name: "plain text heart codepoint", input: "\u2764", want: "\u2764\ufe0f"},
 		{name: "plain text heart literal", input: "❤", want: "❤️"},
 		{name: "already emoji presentation heart", input: "❤️", want: "❤️"},
+		{name: "plain text writing hand codepoint", input: "\u270d", want: "\u270d\ufe0f"},
+		{name: "plain text writing hand literal", input: "✍", want: "✍️"},
+		{name: "already emoji presentation writing hand", input: "✍️", want: "✍️"},
 		{name: "thumbs up unchanged", input: "👍", want: "👍"},
 		{name: "fire emoji unchanged", input: "🔥", want: "🔥"},
 		{name: "empty string unchanged", input: "", want: ""},
@@ -158,6 +161,24 @@ func TestConvertReactions_NormalizesHeartEmoji(t *testing.T) {
 	assert.Equal(t, 5, got[2].Count)
 }
 
+func TestConvertReactions_NormalizesWritingHandEmoji(t *testing.T) {
+	mr := tg.MessageReactions{
+		Results: []tg.ReactionCount{
+			{Reaction: &tg.ReactionEmoji{Emoticon: "\u270d"}, Count: 2},
+			{Reaction: &tg.ReactionEmoji{Emoticon: "✍️"}, Count: 4},
+			{Reaction: &tg.ReactionEmoji{Emoticon: "👍"}, Count: 5},
+		},
+	}
+	got := convertReactions(mr)
+	require.Len(t, got, 3)
+	assert.Equal(t, "✍️", got[0].Emoji)
+	assert.Equal(t, 2, got[0].Count)
+	assert.Equal(t, "✍️", got[1].Emoji)
+	assert.Equal(t, 4, got[1].Count)
+	assert.Equal(t, "👍", got[2].Emoji)
+	assert.Equal(t, 5, got[2].Count)
+}
+
 func TestNewestUnreadReaction_NormalizesHeartEmoji(t *testing.T) {
 	mr := tg.MessageReactions{
 		RecentReactions: []tg.MessagePeerReaction{
@@ -169,4 +190,17 @@ func TestNewestUnreadReaction_NormalizesHeartEmoji(t *testing.T) {
 	assert.Equal(t, "❤️", emoji)
 	assert.Equal(t, int64(1700000000), date.Unix())
 }
+
+func TestNewestUnreadReaction_NormalizesWritingHandEmoji(t *testing.T) {
+	mr := tg.MessageReactions{
+		RecentReactions: []tg.MessagePeerReaction{
+			{Unread: true, Date: 1700000000, Reaction: &tg.ReactionEmoji{Emoticon: "\u270d"}},
+		},
+	}
+	emoji, date, ok := newestUnreadReaction(mr)
+	require.True(t, ok)
+	assert.Equal(t, "✍️", emoji)
+	assert.Equal(t, int64(1700000000), date.Unix())
+}
+
 

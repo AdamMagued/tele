@@ -348,14 +348,19 @@ func reactionsHaveUnread(mr tg.MessageReactions) bool {
 }
 
 // normalizeReactionEmoji standardizes Telegram reaction emojis to emoji presentation.
-// Telegram delivers incoming heart reactions as U+2764 without variation selector
-// U+FE0F, which defaults to text presentation. Standardizing to U+2764 U+FE0F ensures
-// consistent emoji rendering and byte-for-byte comparisons throughout the app.
+// Telegram delivers incoming heart (U+2764) and writing hand (U+270D) reactions
+// without variation selector U+FE0F, which defaults to text presentation. Standardizing
+// to emoji presentation ensures consistent emoji rendering and byte-for-byte comparisons
+// throughout the app.
 func normalizeReactionEmoji(emoji string) string {
-	if emoji == "\u2764" {
+	switch emoji {
+	case "\u2764":
 		return "\u2764\ufe0f"
+	case "\u270d":
+		return "\u270d\ufe0f"
+	default:
+		return emoji
 	}
-	return emoji
 }
 
 // newestUnreadReaction returns the emoji and timestamp of the most recent unread
